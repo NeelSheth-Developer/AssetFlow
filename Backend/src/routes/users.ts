@@ -172,11 +172,16 @@ usersRouter.patch('/:id/role', async (req, res, next) => {
     if (!(role in ROLE_LABELS)) return fail(res, 400, 'Invalid role');
     if (id === req.user!.userId) return fail(res, 403, 'You cannot change your own role');
 
-    const target = await query<{ id: string; department_id: string | null }>(
-      'SELECT id, department_id FROM users WHERE id = $1',
+    const target = await query<{ id: string; role: Role; department_id: string | null }>(
+      'SELECT id, role, department_id FROM users WHERE id = $1',
       [id],
     );
-    if (!target.rowCount) return fail(res, 404, 'User not found');
+
+
+    if (target.rows[0].role === role) {
+      return ok(res, 200, `User is already a ${ROLE_LABELS[role]}`);
+    }
+
     if (role === 'DEPT_HEAD' && !target.rows[0].department_id) {
       return fail(res, 400, 'Assign a department before promoting to Department Head');
     }
@@ -206,8 +211,20 @@ usersRouter.patch('/:id/department', async (req, res, next) => {
     if (!isUuid(id)) return fail(res, 404, 'User not found');
     if (departmentId !== null && !isUuid(departmentId)) return fail(res, 404, 'Department not found');
 
-    const target = await query<{ id: string; role: Role }>('SELECT id, role FROM users WHERE id = $1', [id]);
+    const target = await query<{ id: string; role: Role; department_id: string | null }>(
+      'SELECT id, role, department_id FROM users WHERE id = $1',
+      [id],
+    );
     if (!target.rowCount) return fail(res, 404, 'User not found');
+    if (target.rows[0].department_id === departmentId) {
+      return ok(
+        res,
+        200,
+        departmentId === null
+          ? 'User is already not assigned to any department'
+          : 'User is already assigned to this department',
+      );
+    }
     if (departmentId === null && target.rows[0].role === 'DEPT_HEAD') {
       return fail(res, 400, 'Cannot unassign department from a Department Head');
     }
@@ -247,10 +264,31 @@ usersRouter.patch('/:id/status', async (req, res, next) => {
     if (status !== 'ACTIVE' && status !== 'INACTIVE') return fail(res, 400, 'Invalid status');
     if (id === req.user!.userId) return fail(res, 403, 'You cannot deactivate yourself');
 
+    const target = await query<{ id: string; status: 'ACTIVE' | 'INACTIVE' }>(
+      'SELECT id, status FROM users WHERE id = $1',
+      [id],
+    );
+
+    if (!target.rowCount) return fail(res, 404, 'User not found');
+
+    if (target.rows[0].status === status) {
+      return ok(
+        res,
+        200,
+        status === 'ACTIVE'
+          ? 'User is already active'
+          : 'User is already inactive',
+      );
+    }
+
     const updated = await query<{ id: string; status: string }>(
-      `UPDATE users SET status = $2::user_status, updated_at = now() WHERE id = $1 RETURNING id, status`,
+      `UPDATE users
+      SET status = $2::user_status, updated_at = now()
+      WHERE id = $1
+      RETURNING id, status`,
       [id, status],
     );
+
     if (!updated.rowCount) return fail(res, 404, 'User not found');
 
     if (status === 'INACTIVE') {
