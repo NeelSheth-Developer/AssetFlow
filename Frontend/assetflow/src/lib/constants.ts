@@ -118,7 +118,7 @@ export const NOTIFICATION_TYPES = {
 } as const;
 
 export const NAV_ITEMS = [
-  { label: "Dashboard", href: "/", icon: "LayoutDashboard" },
+  { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
   { label: "Organization", href: "/organization", icon: "Building2" },
   { label: "Assets", href: "/assets", icon: "Package" },
   { label: "Allocations", href: "/allocations", icon: "ArrowLeftRight" },
