@@ -36,13 +36,17 @@ app.use(
   }),
 );
 
-// Request logging: one line per request with id, method, url, status, duration.
-// Never logs bodies (passwords/OTPs) and redacts auth headers + cookies.
+// Request logging: one minimal line per request — id, method, url, status, duration.
+// Custom serializers drop the default header/address dumps, so nothing sensitive
+// (auth headers, cookies) is ever logged and each line stays readable.
 app.use(
   pinoHttp({
     logger,
     genReqId: (req) => (req.headers['x-request-id'] as string) ?? randomUUID(),
-    redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: '[redacted]' },
+    serializers: {
+      req: (req) => ({ id: req.id, method: req.method, url: req.url }),
+      res: (res) => ({ statusCode: res.statusCode }),
+    },
     customLogLevel: (_req, res, error) =>
       error || res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
     autoLogging: { ignore: (req) => req.url === '/health' },
