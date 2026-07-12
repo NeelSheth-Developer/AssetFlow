@@ -1,4042 +1,2310 @@
-# AssetFlow — Backend
+# AssetFlow — Backend API Documentation
 
-Authentication & RBAC API for AssetFlow.
-
-**Stack:** Node.js + TypeScript + Express · Neon (Postgres) · Nodemailer · JWT (HttpOnly cookies)
-
-**Locked decisions**
-
-| Decision | Value |
-|---|---|
-| Login | Email + password only |
-| OTP at signup | **Not used** — signup logs you straight in |
-| OTP usage | **Forgot password only** |
-| Tokens | Access token (15 min) + Refresh token (7 days, rotating) |
-| Role at signup | Always `EMPLOYEE` — hardcoded server-side |
-| Admin creation | Seeded directly into the database (`npm run db:seed`) |
-| Role assignment | Admin only, from the Employee Directory |
+Complete reference for the AssetFlow REST API: authentication, roles, every endpoint with request/response schemas, and the full database schema.
 
 ---
 
-## Index
+## Base URL
 
-1. [Quick start](#1-quick-start)
-2. [Environment variables](#2-environment-variables)
-3. [Scripts](#3-scripts)
-4. [Project structure](#4-project-structure)
-5. [Response envelope](#5-response-envelope)
-6. [Where the tokens live](#6-where-the-tokens-live)
-7. [Database schema](#7-database-schema)
-8. [Auth API](#8-auth-api)
-9. [Role assignment API (Admin only)](#9-role-assignment-api-admin-only)
-10. [Departments & Categories API](#10-departments--categories-api)
-11. [Authorization middleware & status codes](#11-authorization-middleware--status-codes)
-12. [The four roles](#12-the-four-roles)
-13. [Route permission matrix](#13-route-permission-matrix)
-14. [Demo credentials](#14-demo-credentials)
-15. [The 60-second RBAC demo](#15-the-60-second-rbac-demo)
-16. [Frontend integration notes](#16-frontend-integration-notes)
-17. [API reference — all endpoints](#17-api-reference--all-endpoints)
-    · [Auth](#171-auth-apiauth) · [Users](#172-users-apiusers) · [Departments](#173-departments-apidepartments)
-    · [Categories](#174-categories-apicategories) · [Assets](#175-assets-apiassets) · [Locations](#176-locations-apilocations)
-    · [Allocations](#177-allocations-apiallocations) · [Transfers](#178-transfers-apitransfers)
-    · [Resources](#179-resources-bookable-apiresources) · [Bookings](#1710-bookings-apibookings) · [Maintenance](#1711-maintenance-apimaintenance)
-    · [Audit Cycles](#1712-audit-cycles-apiaudit-cycles) · [Dashboard](#1713-dashboard-apidashboard) · [Reports](#1714-reports-apireports)
-    · [Notifications](#1715-notifications-apinotifications) · [Activity Logs](#1716-activity-logs-apiactivity-logs) · [Health](#1717-health-health)
+```
+https://assetflow-production-85d2.up.railway.app
+```
+
+All module endpoints are prefixed with `/api` (e.g. `https://assetflow-production-85d2.up.railway.app/api/auth/login`). The only exception is the health check, which lives at `/health`.
 
 ---
 
-## 1. Quick start
+## Table of Contents
 
-```bash
-cd Backend
-npm install
-cp .env.example .env        # fill in DATABASE_URL, JWT_ACCESS_SECRET, mail creds
-npm run db:migrate          # creates all tables in Neon (idempotent)
-npm run db:seed             # seeds the Admin + demo accounts + departments
-npm run dev                 # http://localhost:3000, auto-reload
-```
+1. [Response Envelope](#1-response-envelope)
+2. [Authentication (Cookies & Bearer Token)](#2-authentication-cookies--bearer-token)
+3. [Roles & Access Scoping](#3-roles--access-scoping)
+4. [Health](#4-health)
+5. [Auth API](#5-auth-api) — `/api/auth`
+6. [Users API](#6-users-api) — `/api/users`
+7. [Departments API](#7-departments-api) — `/api/departments`
+8. [Categories API](#8-categories-api) — `/api/categories`
+9. [Locations API](#9-locations-api) — `/api/locations`
+10. [Assets API](#10-assets-api) — `/api/assets`
+11. [Allocations API](#11-allocations-api) — `/api/allocations`
+12. [Transfers API](#12-transfers-api) — `/api/transfers`
+13. [Resources & Bookings API](#13-resources--bookings-api) — `/api/resources`, `/api/bookings`
+14. [Maintenance API](#14-maintenance-api) — `/api/maintenance`
+15. [Audit Cycles API](#15-audit-cycles-api) — `/api/audit-cycles`
+16. [Dashboard API](#16-dashboard-api) — `/api/dashboard`
+17. [Reports API](#17-reports-api) — `/api/reports`
+18. [Notifications API](#18-notifications-api) — `/api/notifications`
+19. [Activity Logs API](#19-activity-logs-api) — `/api/activity-logs`
+20. [Error Reference](#20-error-reference)
+21. [Database Schema](#21-database-schema)
+22. [Seeded Test Accounts](#22-seeded-test-accounts)
 
-Verify: `curl http://localhost:3000/health` → reports DB connectivity and latency.
+---
 
-## 2. Environment variables
+## 1. Response Envelope
 
-| Variable | Required | Purpose |
-|---|---|---|
-| `DATABASE_URL` | ✅ | Neon Postgres connection string (`sslmode=require`) |
-| `JWT_ACCESS_SECRET` | ✅ | `openssl rand -hex 32` — signs the access JWT |
-| `ACCESS_TOKEN_TTL` | | Access token lifetime (default `15m`) |
-| `REFRESH_TOKEN_TTL_DAYS` | | Refresh token lifetime (default `7`) |
-| `CLIENT_URL` | | Frontend origin(s) for CORS with credentials; comma-separate several (default `http://localhost:5173`) |
-| `PORT` / `NODE_ENV` | | Default `3000` / `development` |
-| `APP_NAME` | | Name used in emails (default `AssetFlow`) |
-| `MAIL_USER` / `MAIL_PASS` | ✅ for emails | Gmail address + **App Password** (needs 2FA on the Google account) — the only email sender, delivers to any address |
-
-Forgot-password emails require `MAIL_USER`/`MAIL_PASS`. Create the App Password at myaccount.google.com/apppasswords.
-
-## 3. Scripts
-
-| Command | What it does |
-|---|---|
-| `npm run dev` | Dev server with auto-reload (`tsx watch`) |
-| `npm start` | Run the server |
-| `npm run db:migrate` | Apply `sql/schema.sql` to Neon — idempotent, safe to re-run |
-| `npm run db:seed` | Seed Admin + demo users + Engineering/Sales departments — idempotent |
-| `npm run typecheck` | `tsc --noEmit` (strict mode) |
-
-## 4. Project structure
-
-```
-src/
-  server.ts              boot: verify DB, start listening
-  app.ts                 express wiring: helmet, CORS+credentials, logging, sanitize, routers
-  config.ts              typed env access (fails fast on missing vars)
-  db/
-    neon.ts              pg Pool — the only file that knows the database
-    migrate.ts           applies sql/schema.sql
-    seed.ts              demo accounts (spec §3.6 / §11)
-  lib/
-    tokens.ts            access JWT sign/verify · opaque refresh token
-    cookies.ts           at/rt HttpOnly cookie options (Secure+None in prod, Lax in dev)
-    crypto.ts            6-digit OTP · SHA-256 token hashing
-    email.ts             Nodemailer (Gmail SMTP) — branded HTML reset-code email
-    respond.ts           the { success, message, data } envelope
-    validate.ts          email/UUID validators
-    logger.ts            pino (pretty in dev, JSON in prod)
-  middleware/
-    auth.ts              requireAuth · requireRole · requireOwnDepartment
-    sanitize.ts          trims strings, strips control chars, caps depth, blocks proto-pollution
-    activity.ts          logActivity() — appends to the activity trail
-    notify.ts            notify() — creates in-app notifications
-    scope.ts             role-based SQL scoping (own / dept / org-wide)
-    cloudinary.ts        asset document uploads (assets/<assetId> folders)
-  routes/
-    health.ts  auth.ts  users.ts  departments.ts  categories.ts
-    assets.ts  locations.ts  allocations.ts  transfers.ts  bookings.ts
-    maintenance.ts  audits.ts  dashboard.ts  reports.ts
-    notifications.ts  activity-logs.ts
-sql/schema.sql           full DDL (auth spec §3.5 + all module tables)
-```
-
-## 5. Response envelope
-
-**Every endpoint returns the same shape.** No exceptions.
+Every endpoint (except CSV exports and `/health`) returns the same JSON envelope:
 
 ```json
-{ "success": true,  "message": "Login successful", "data": { "user": { "…": "…" } } }
-{ "success": true,  "message": "Logged out",       "data": null }
-{ "success": false, "message": "Invalid credentials", "data": null }
+{
+  "success": true,
+  "message": "Human-readable summary",
+  "data": { }
+}
 ```
 
-| Key | Type | Rule |
-|---|---|---|
-| `success` | boolean | `true` for 2xx, `false` for 4xx/5xx |
-| `message` | string | Always present, human-readable — this is what the frontend toasts |
-| `data` | object \| null | The payload; `null` when there is nothing to return |
+| Field     | Type              | Description                                        |
+|-----------|-------------------|----------------------------------------------------|
+| `success` | boolean           | `true` on 2xx, `false` on any error                |
+| `message` | string            | Human-readable result / error message              |
+| `data`    | object \| null    | Payload; `null` when there is nothing to return    |
 
-Everything lives **inside `data`** (`data.user`, `data.users`, `data.total`) — never at the top level.
+Error responses use the same shape with `success: false` and `data: null`.
 
-## 6. Where the tokens live
+**Request body limit:** JSON bodies are capped at **20 KB** (`express.json({ limit: '20kb' })`). File uploads use `multipart/form-data` (see [Assets — documents](#post-apiassetsiddocuments)).
 
-Tokens are **not in the JSON body** — they travel in `Set-Cookie` response headers.
+---
 
-| | Access token `at` | Refresh token `rt` |
-|---|---|---|
-| Format | JWT (HS256) `{ userId, role, departmentId }` | Random 64-byte opaque hex |
-| Lifetime | 15 minutes | 7 days |
-| Sent on | every API request (`Path=/`) | only `/api/auth/*` (`Path=/api/auth`) |
-| Stored in DB | No — stateless | Yes — SHA-256 hash in `refresh_tokens` |
-| Readable by JS | **No** (`HttpOnly`) | **No** (`HttpOnly`) |
+## 2. Authentication (Cookies & Bearer Token)
 
-- **Rotation:** every `/refresh` revokes the presented token and chains it to its replacement (`replaced_by`).
-- **Reuse detection:** presenting an already-revoked token revokes **every** active session for that user.
-- **Dev vs prod cookies:** production uses `Secure; SameSite=None` (cross-origin Vercel↔Render); development uses `SameSite=Lax` without `Secure` so cookies work over plain http.
-- **Bearer fallback (spec §2.1):** `requireAuth` also accepts `Authorization: Bearer <at>` if you ever need it.
+The API issues a **JWT access token** and an **opaque refresh token** on signup / login. Both are delivered as **HttpOnly cookies**, and the access token is *also* accepted via the `Authorization` header (fallback mode for Postman, mobile clients, etc.).
 
-## 7. Database schema
+### 2.1 Tokens
 
-Applied by `npm run db:migrate`. Enums: `user_role` = `ADMIN | ASSET_MANAGER | DEPT_HEAD | EMPLOYEE`, `user_status` = `ACTIVE | INACTIVE`.
+| Token             | Name | Format                                   | Lifetime            | Where it lives                                |
+|-------------------|------|------------------------------------------|---------------------|-----------------------------------------------|
+| Access token      | `at` | JWT — payload `{ userId, role, departmentId }`, issuer `assetflow-api`, audience `api` | **15 minutes** (`ACCESS_TOKEN_TTL`) | Cookie `at` (Path=`/`) **or** `Authorization: Bearer <jwt>` header |
+| Refresh token     | `rt` | Opaque 128-hex-char random string; only its SHA-256 hash is stored in the DB | **7 days** (`REFRESH_TOKEN_TTL_DAYS`) | Cookie `rt` (Path=`/api/auth` — sent only to auth endpoints) |
 
-| Table | Purpose | Key columns |
-|---|---|---|
-| `departments` | Org structure; optional hierarchy | `name` unique, `head_id → users`, `parent_id → departments`, `status` |
-| `users` | The auth table — **`role` drives all RBAC, `department_id` drives scoping** | `email` unique, `password_hash` (bcrypt 10), `role`, `department_id` (NULL until Admin assigns), `status` |
-| `password_reset_otps` | Forgot-password codes | `code_hash` (bcrypt of the 6 digits), `expires_at` (+10 min), `consumed`, `attempts` (lock at 5), `created_at` (60s resend cooldown) |
-| `refresh_tokens` | One row per session | `token_hash` (SHA-256) unique, `expires_at` (+7 days), `revoked_at`, `replaced_by` (rotation chain) |
-| `categories` | Asset categories + custom fields, optional hierarchy (Screen 3/4) | `name` unique, `custom_fields` JSONB (each field has an `id`), `parent_id`, `icon` |
+### 2.2 Cookie attributes
 
-**Module tables (Screens 2–10):**
+| Attribute  | Production                | Development        |
+|------------|---------------------------|--------------------|
+| `HttpOnly` | ✅                        | ✅                 |
+| `Secure`   | ✅                        | ❌ (plain HTTP)    |
+| `SameSite` | `None` (cross-site SPA)   | `Lax`              |
+| `Path`     | `at` → `/` · `rt` → `/api/auth` | same         |
 
-| Table | Purpose | Key columns |
-|---|---|---|
-| `locations` / `floors` / `rooms` | Building → floor → room cascade | `building`, `city` · `location_id` · `floor_id` |
-| `assets` | Core asset registry | `tag` unique (auto `AF-000N`), `serial_no`, `category_id`, `department_id`, `status` (`AVAILABLE·ALLOCATED·UNDER_MAINTENANCE·RETIRED·DISPOSED·LOST`), `condition`, `location`/`room_id`, `is_bookable`, `custom_values` JSONB, `retirement`/`disposal` JSONB |
-| `asset_documents` | Uploaded files per asset (Cloudinary) | `url`, `filename`, `mime`, `bytes`, `uploaded_by` |
-| `allocations` | Asset ↔ holder lifecycle | `status` (`PENDING·ACTIVE·RETURN_REQUESTED·RETURNED·REJECTED`), `expected_return_date`, `condition_on_return`, `approved_by` |
-| `transfer_requests` | Transfer workflow | `from_user`, `to_user`, `status` (`REQUESTED·APPROVED·REJECTED`), `decided_by`, `decision_reason` |
-| `bookings` / `booking_series` | Resource bookings + recurring series | `resource_id → assets`, `start_ts`/`end_ts`, `status` (`CONFIRMED·CANCELLED`; Upcoming/Ongoing/Completed derived), `series_id`, `frequency` |
-| `maintenance_requests` | Repair pipeline | `issue`, `priority` (`LOW…CRITICAL`), `status` (`PENDING·APPROVED·REJECTED·TECHNICIAN_ASSIGNED·IN_PROGRESS·RESOLVED·ESCALATED`), `technician_id`/`technician_name`, `cost` |
-| `maintenance_comments` | Comment thread per request | `request_id`, `author_id`, `text` |
-| `audit_cycles` (+`_departments`, `_auditors`) | Audit cycles, scope, assigned auditors | `scope_type` (`ALL·DEPARTMENT`), `status` (`ACTIVE·CLOSED`) — *auditor is an assignment, not a role* |
-| `audit_items` | Per-asset checklist snapshot | `verification` (`PENDING·VERIFIED·DISCREPANCY·MISSING`), `notes`, `photo_url`, `verified_by`, unique `(cycle_id, asset_id)` |
-| `notifications` | Per-user in-app feed | `type`, `title`, `message`, `entity_type/id`, `read` |
-| `notification_preferences` | Per-user settings | `prefs` JSONB (merged over defaults) |
-| `activity_logs` | Full audit trail | `actor_id`, `action_type` (`ALLOCATION·RETURN·TRANSFER·BOOKING·MAINTENANCE·AUDIT·ASSET·USER_CHANGE·SYSTEM`), `description`, `metadata` |
+Because cookies are cross-site in production, browser clients **must** send requests with `credentials: 'include'` (CORS on the server is configured with `credentials: true` and an origin allowlist from `CLIENT_URL`).
 
-No `is_verified` column — signup sends no OTP. The seeded Admin is what satisfies *"not self-assigned admin roles"*: the signup endpoint physically cannot produce an `ADMIN`.
+### 2.3 Using the API
 
-## 8. Auth API
-
-Base path `/api/auth`.
-
-| # | Endpoint | Auth | Tokens issued |
-|---|---|---|---|
-| 8.1 | `POST /signup` | public | ✅ `at` + `rt` |
-| 8.2 | `POST /login` | public | ✅ `at` + `rt` |
-| 8.3 | `POST /refresh` | `rt` cookie | ✅ new pair (old `rt` revoked) |
-| 8.4 | `POST /logout` | `rt` cookie | ❌ cookies cleared |
-| 8.5 | `GET /me` | `at` | ❌ |
-| 8.6 | `POST /forgot-password` | public | ❌ |
-| 8.7 | `POST /reset-password` | public (OTP is the proof) | ❌ |
-| 8.8 | `POST /change-password` | `at` | ❌ |
-
-### 8.1 `POST /signup`
-
-```json
-{ "name": "Raj Mehta", "email": "raj@example.com", "password": "Raj@12345" }
-```
-
-Rules: `name` 2–100 chars · valid `email` (lowercased) · `password` ≥ 8 chars. A `"role"` field in the body is **never read** — the insert hardcodes `'EMPLOYEE'`.
-
-**201** → `data.user` = `{ id, name, email, role: "EMPLOYEE", departmentId: null, status: "ACTIVE" }`
-**Errors:** `400` validation · `409 Email already registered`
-
-### 8.2 `POST /login`
-
-```json
-{ "email": "raj@example.com", "password": "Raj@12345" }
-```
-
-Checks in order: user exists → bcrypt matches → status ACTIVE → issue tokens.
-**Errors:** `400 Email and password are required` · `401 Invalid credentials` (same message for unknown email and wrong password — prevents enumeration) · `403 Account is inactive. Contact your administrator.`
-
-### 8.3 `POST /refresh`
-
-No body — the browser sends the `rt` cookie. Rotates the refresh token, mints a new access token. **Role and department are re-read from the database**, never copied from the old token — an Admin's promotion/demotion takes effect without logout, within 15 minutes at worst.
-**Errors:** `401 Session expired. Please log in again.` (missing/expired/revoked/reused) · `403 Account is inactive.`
-
-### 8.4 `POST /logout`
-
-Revokes the presented `rt`, clears both cookies. Always `200`, even without a valid session.
-
-### 8.5 `GET /me`
-
-Rehydrates `AuthContext` on app load. Reads role/department **fresh from the DB**.
-**200** → `data.user` = `{ id, name, email, role, departmentId, department: { id, name } | null, status }`
-**Errors:** `401 Not authenticated`
-
-### 8.6 `POST /forgot-password`
-
-```json
-{ "email": "raj@example.com" }
-```
-
-Emails a 6-digit code (10-minute expiry) via Gmail SMTP (Nodemailer). Returns the same generic `200` whether or not the email exists (anti-enumeration):
-`"If that email is registered, a reset code has been sent."`
-**Errors:** `429 Please wait 60 seconds before requesting another code.`
-
-### 8.7 `POST /reset-password`
-
-OTP and new password **together in one request** — verification and update are atomic (a separate verify endpoint would let anyone hit step 2 without proof).
-
-```json
-{ "email": "raj@example.com", "otp": "482913", "newPassword": "NewPass@123" }
-```
-
-On success: password updated → OTP consumed → **every refresh token revoked** (boots out an attacker if the account was compromised). The user logs in again.
-**Errors:** `400 Invalid or expired code` · `400 Password must be at least 8 characters` · `429 Too many attempts. Request a new code.` (5 wrong tries)
-
-### 8.8 `POST /change-password`
-
-```json
-{ "currentPassword": "Raj@12345", "newPassword": "NewPass@123" }
-```
-
-Current session survives; all **other** sessions are revoked.
-**Errors:** `400 Current password is incorrect` · `401 Not authenticated`
-
-## 9. Role assignment API (Admin only)
-
-Employee Directory (Screen 3, Tab C) — **the only place `users.role` is ever written by a request.** All routes: `requireAuth` + `requireRole('ADMIN')`.
-
-### 9.1 `GET /api/users`
-
-Query params: `page` (default 1) · `limit` (default 20, max 100) · `q` (name/email, case-insensitive) · `role` · `departmentId` · `status`.
-**200** → `data` = `{ users: [{ id, name, email, role, department: { id, name } | null, status, createdAt }], total, page, limit }`
-
-### 9.2 `PATCH /api/users/:id/role`
-
-```json
-{ "role": "ASSET_MANAGER" }
-```
-
-Allowed: `EMPLOYEE`, `ASSET_MANAGER`, `DEPT_HEAD`. **`ADMIN` is deliberately not accepted.**
-**Errors:** `400 Invalid role` (including `"ADMIN"`) · `400 Assign a department before promoting to Department Head` · `403 You cannot change your own role` · `404 User not found`
-The target's existing access token still carries the old role — it self-corrects on their next refresh (≤ 15 min).
-
-### 9.3 `PATCH /api/users/:id/department`
-
-```json
-{ "departmentId": "9c4a…" }   // or null to unassign
-```
-
-**Errors:** `400 Cannot unassign department from a Department Head` · `404 Department not found` · `404 User not found`
-
-### 9.4 `PATCH /api/users/:id/status`
-
-```json
-{ "status": "INACTIVE" }
-```
-
-Deactivating revokes **all** of that user's refresh tokens immediately — their access token dies within 15 minutes and cannot be renewed.
-**Errors:** `403 You cannot deactivate yourself` · `404 User not found`
-
-## 10. Departments & Categories API
-
-Reads: any authenticated user. Writes: **Admin only.**
-
-| Endpoint | Method | Notes |
-|---|---|---|
-| `/api/departments` | GET | List with head + employee count |
-| `/api/departments/:id` | GET | Detail: `{ id, name, head: {id,name}, parentId, status, employeeCount }` |
-| `/api/departments` | POST | `{ name, headId?, parentId? }` → 201 · `409` duplicate name |
-| `/api/departments/:id` | PATCH | Partial: `name`, `headId`, `parentId`, `status` |
-| `/api/departments/:id` | DELETE | Members' `department_id` becomes NULL (FK) |
-| `/api/categories` | GET | `{ id, name, customFields, status }` — Screen 4 picklist |
-| `/api/categories` | POST | `{ name, customFields?: [{ key, label, type }] }` → 201 |
-| `/api/categories/:id` | PATCH / DELETE | Admin only |
-
-## 11. Authorization middleware & status codes
-
-Applied in this order:
-
-- **`requireAuth`** — verifies the `at` cookie JWT (or Bearer header). Attaches `req.user = { userId, role, departmentId }`. Fail → `401 Not authenticated`.
-- **`requireRole(...roles)`** — checks `req.user.role`. Fail → `403 Insufficient permissions`.
-- **`requireOwnDepartment(loader)`** — for Dept Heads; compares the target record's `department_id` with `req.user.departmentId`. Admin and Asset Manager bypass (org-wide). Fail → `403 This record is outside your department`. (Wired up by the asset/transfer modules as they land.)
-
-| Code | Meaning | Raised by |
-|---|---|---|
-| 400 | Bad input | Validation |
-| 401 | No / invalid / expired access token | `requireAuth` |
-| 403 | Valid token, wrong role | `requireRole` |
-| 403 | Right role, wrong department | `requireOwnDepartment` |
-| 403 | Account inactive | Login / refresh |
-| 404 | Record not found | Controller |
-| 409 | Email/name already registered | Signup, departments, categories |
-| 429 | OTP cooldown / too many attempts | Rate limit |
-
-Also on: helmet security headers, request logging with secret redaction, a global input sanitizer (trims strings, strips control characters, caps length/depth/array size, drops `__proto__`/`constructor`/`prototype`), and a 20 kb JSON body limit.
-
-## 12. The four roles
-
-- **Admin** — Organization Setup (departments, categories, employee directory). **The only role that can assign roles.** Org-wide analytics. Seeded into the DB; never created via signup.
-- **Asset Manager** — Registers and allocates assets; approves transfers, maintenance, returns, audit discrepancies. Organisation-wide scope.
-- **Department Head** — Views/approves within **their own department** only (`requireOwnDepartment`).
-- **Employee** — The default for every signup. Own assets, bookings, maintenance requests, return/transfer requests.
-
-Roles are **cumulative** — every authenticated user has the Employee baseline, with role-specific permissions layered on top.
-
-> **Auditor is not a role.** Auditors are assigned to an audit cycle (`audit_cycle_auditors` join table, when the audit module lands). The check is "is this user an assigned auditor on this cycle?" — adding `AUDITOR` to the enum would be a design error.
-
-## 13. Route permission matrix
-
-Implemented today (`requireAuth` on every row; `—` = any authenticated user):
-
-| Endpoint | Method | Role guard |
-|---|---|---|
-| `/health` | GET | public |
-| `/api/auth/signup` · `/login` · `/forgot-password` · `/reset-password` · `/refresh` | POST | public |
-| `/api/auth/me` | GET | — |
-| `/api/auth/logout` · `/change-password` | POST | — |
-| `/api/departments` | GET | — |
-| `/api/departments/:id` | GET | — |
-| `/api/departments` (+`/:id`) | POST / PATCH / DELETE | `ADMIN` |
-| `/api/categories` | GET | — |
-| `/api/categories` (+`/:id`) | POST / PATCH / DELETE | `ADMIN` |
-| `/api/users` | GET | `ADMIN` |
-| `/api/users/:id/role` · `/department` · `/status` | PATCH | `ADMIN` |
-| `/api/users/:id/assets` · `/:id/activity` | GET | `ADMIN` |
-| `/api/users/me/profile` | PATCH | — |
-| `/api/departments/:id/employees` · `/:id/assets` | GET | — |
-| `/api/categories/tree` · `/:id` | GET | — |
-| `/api/categories/:id/custom-fields` (+`/:fieldId`) | POST / DELETE | `ADMIN` |
-| `/api/locations` | GET | — |
-| `/api/assets` · `/search` · `/:id` · `/:id/history` · `/:id/qr` | GET | — (scoped: Employee → held, Dept Head → dept) |
-| `/api/assets` (+`/:id`) | POST / PATCH | `ADMIN`, `ASSET_MANAGER` |
-| `/api/assets/:id/documents` · `/retire` · `/dispose` · `/mark-lost` | POST | `ADMIN`, `ASSET_MANAGER` |
-| `/api/assets/bulk-delete` | POST | `ADMIN` |
-| `/api/allocations` · `/kanban` · `/overdue` · `/:id` | GET | — (scoped) |
-| `/api/allocations` | POST | `ADMIN`, `ASSET_MANAGER` |
-| `/api/allocations/:id/approve` | POST | `ADMIN`, `ASSET_MANAGER`, `DEPT_HEAD` (own dept) |
-| `/api/allocations/:id/return` | POST | holder only |
-| `/api/allocations/:id/return/approve` | POST | `ADMIN`, `ASSET_MANAGER` |
-| `/api/transfers` · `/:id` | GET | — (scoped) |
-| `/api/transfers` | POST | — |
-| `/api/transfers/:id/approve` · `/reject` | POST | `ADMIN`, `ASSET_MANAGER`, `DEPT_HEAD` (own dept) |
-| `/api/resources` · `/:id/calendar` · `/:id/availability` | GET | — |
-| `/api/bookings` · `/my` · `/:id` | GET | — (scoped / owner or Dept Head) |
-| `/api/bookings` · `/recurring` · `/check-availability` | POST | — |
-| `/api/bookings/:id/cancel` · `/reschedule` | POST | owner, or Dept Head of booker's dept |
-| `/api/maintenance` · `/:id` · `/:id/comments` | GET | — (scoped; technicians see their jobs) |
-| `/api/maintenance` · `/:id/comments` | POST | — |
-| `/api/maintenance/:id/approve` · `/reject` · `/assign` · `/escalate` | POST | `ADMIN`, `ASSET_MANAGER` |
-| `/api/maintenance/:id/start` · `/resolve` | POST | assigned technician (or AM) |
-| `/api/audit-cycles` · `/:id` · `/:id/items` · `/:id/progress` · `/:id/discrepancy-report` · `/:id/summary` | GET | — (Dept Head → cycles covering their dept) |
-| `/api/audit-cycles` · `/:id/auditors` · `/:id/close` | POST | `ADMIN` |
-| `/api/audit-cycles/:id/items/:itemId` · `/items/bulk-update` | PATCH | assigned auditor (or Admin) |
-| `/api/dashboard/kpis` · `/overdue` · `/activity-feed` · `/utilization-chart` · `/upcoming-returns` · `/health-score` | GET | — (scoped) |
-| `/api/reports/utilization` · `/maintenance-frequency` · `/due-for-maintenance` · `/allocation-summary` · `/booking-heatmap` · `/export` | GET | `ADMIN`, `ASSET_MANAGER`, `DEPT_HEAD` (own dept) |
-| `/api/notifications` · `/preferences` | GET | own only |
-| `/api/notifications/:id/read` · `/preferences` | PATCH | own only |
-| `/api/notifications/mark-all-read` | POST · `/:id` DELETE | own only |
-| `/api/activity-logs` · `/export` | GET | `ADMIN` |
-
-## 14. Demo credentials
-
-Seeded by `npm run db:seed`:
-
-| Role | Name | Email | Password |
-|---|---|---|---|
-| Admin | System Admin | `admin@assetflow.com` | `Admin@123` |
-| Asset Manager | Asset Manager | `manager@assetflow.com` | `Manager@123` |
-| Department Head | Department Head | `head@assetflow.com` | `Head@123` |
-| Employee | Employee | `employee@assetflow.com` | `Employee@123` |
-
-The Department Head and Employee are pre-assigned to **Engineering**. Reviewers can also sign up themselves — new accounts become Employees, and the Admin can promote them.
-
-## 15. The 60-second RBAC demo
-
-1. Sign up a fresh account → `GET /me` shows **role: EMPLOYEE**, no Organization Setup in the sidebar.
-2. In Postman, `POST /api/departments` with that account's cookie → **403 `Insufficient permissions`.** *"The frontend hides it, the backend blocks it."*
-3. Log in as Admin → set the new user's Department to Engineering, then Role to Asset Manager.
-4. Back in the first tab, the silent refresh (≤ 15 min) or a reload picks up the new role.
-
-That demonstrates: non-self-elevating signup, backend enforcement, the single legitimate promotion path, and live role propagation.
-
-## 16. Frontend integration notes
+**Option A — Cookies (browsers / the frontend):**
 
 ```js
-fetch('/api/assets', { credentials: 'include' })   // ← attaches the HttpOnly cookies
+fetch('https://assetflow-production-85d2.up.railway.app/api/auth/me', {
+  credentials: 'include',
+});
 ```
 
-Backend already ships `cors({ origin: CLIENT_URL, credentials: true })` — without `credentials` on **both** sides, cookies will not cross origins. This is the single most common bug.
+**Option B — Bearer token (Postman, scripts, mobile):**
 
-**Silent refresh interceptor:** any API call returns 401 → call `POST /api/auth/refresh` **once** → on success replay the original request; on failure clear `AuthContext` and redirect to `/login`.
+```
+GET /api/assets HTTP/1.1
+Host: assetflow-production-85d2.up.railway.app
+Authorization: Bearer <access-token-jwt>
+```
 
-**Conditional UI is UX, not security** — hide unavailable actions, but every restriction is independently enforced by the middleware in §11.
+> The middleware checks the `at` cookie **first**, then falls back to the `Authorization: Bearer` header. Note that the login/signup responses set the token in cookies only — to use bearer mode, capture the `at` cookie value from the `Set-Cookie` response header.
 
-## 17. API reference — all endpoints
+### 2.4 Token lifecycle
 
-Complete request/response reference for **all 110 endpoints**. Every response is wrapped in the [§5 envelope](#5-response-envelope) `{ success, message, data }` — the tables below show the **`data`** object only. Auth is the [§6 cookie](#6-where-the-tokens-live) session; **Access** names the required role and *(scoped)* means Employee → own, Dept Head → dept, Admin/AM → all. Path params use `:id`; list values like `uuid` / `ISO` denote types, not literals. Arrays show one representative element.
+- **`POST /api/auth/refresh`** rotates the refresh token: the old one is revoked and chained to its replacement, and a fresh access token is minted. Role / department are re-read from the DB, so promotions apply without re-login.
+- **Reuse detection:** presenting an already-revoked refresh token is treated as theft — *every* active session for that user is revoked.
+- **Password reset** revokes all sessions. **Password change** keeps the current session and revokes all others. **Deactivating a user** revokes all their refresh tokens (access dies within 15 minutes).
 
-### 17.1 Auth (`/api/auth`)
+---
 
-Login/Signup set HttpOnly `at` (15 min) + `rt` (7 day) cookies; every other call reads them automatically.
+## 3. Roles & Access Scoping
 
-| Method | Path | Access |
-|---|---|---|
-| `POST` | `/signup` | Public |
-| `POST` | `/login` | Public |
-| `POST` | `/refresh` | Public (rt cookie) |
-| `POST` | `/logout` | Public |
-| `GET` | `/me` | Authenticated |
-| `POST` | `/forgot-password` | Public |
-| `POST` | `/reset-password` | Public |
-| `POST` | `/change-password` | Authenticated |
+`users.role` is one of four values:
 
-<details><summary><code>POST /api/auth/signup</code> — Register (always EMPLOYEE) and log in.</summary>
+| Role            | Description                                                                   |
+|-----------------|-------------------------------------------------------------------------------|
+| `ADMIN`         | Full org-wide control: user management, org setup, audits, activity logs      |
+| `ASSET_MANAGER` | Org-wide asset operations: register/allocate assets, maintenance, transfers   |
+| `DEPT_HEAD`     | Read/approve within **their own department** only                             |
+| `EMPLOYEE`      | Self-service: own assets, own bookings, raise maintenance, request transfers  |
 
-**Access:** Public
+**Signup always creates an `EMPLOYEE`.** Roles are changed only by an Admin via `PATCH /api/users/:id/role` (promotion to `ADMIN` is never accepted).
 
-**Request body**
+### List scoping (applies to assets, allocations, bookings, maintenance, dashboard)
+
+| Role                    | Sees                                                                 |
+|-------------------------|----------------------------------------------------------------------|
+| `ADMIN`, `ASSET_MANAGER`| Everything (org-wide)                                                |
+| `DEPT_HEAD`             | Rows belonging to users/assets in **their department**               |
+| `EMPLOYEE`              | Only **their own** rows (assets they hold, bookings they made, etc.) |
+
+### Auth error codes
+
+| Status | Meaning                                                             |
+|--------|---------------------------------------------------------------------|
+| `401`  | No / invalid / expired token → `"Not authenticated"`                |
+| `403`  | Valid token, insufficient role → `"Insufficient permissions"`, or out-of-department → `"This record is outside your department"` |
+
+---
+
+## 4. Health
+
+### GET `/health`
+
+Public — no auth. Verifies the database connection. *(Does not use the standard envelope's `data: null` convention; includes a `timestamp`.)*
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "API is healthy",
+  "data": {
+    "status": "ok",
+    "environment": "production",
+    "uptime_seconds": 4210,
+    "database": { "status": "connected", "latency_ms": 12.4 }
+  },
+  "timestamp": "2026-07-12T10:00:00.000Z"
+}
+```
+
+**Response `503`:** same shape with `"status": "degraded"` and `database.status: "disconnected"`.
+
+---
+
+## 5. Auth API
+
+Base: `/api/auth`
+
+| # | Method | Endpoint            | Auth              | Description                                  |
+|---|--------|---------------------|-------------------|----------------------------------------------|
+| 1 | POST   | `/signup`           | Public            | Register (always `EMPLOYEE`) + auto-login    |
+| 2 | POST   | `/login`            | Public            | Login, sets `at` + `rt` cookies              |
+| 3 | POST   | `/refresh`          | `rt` cookie       | Rotate refresh token, mint new access token  |
+| 4 | POST   | `/logout`           | `rt` cookie (optional) | Revoke session, clear cookies           |
+| 5 | GET    | `/me`               | Required          | Current user (fresh from DB)                 |
+| 6 | POST   | `/forgot-password`  | Public            | Email a 6-digit OTP                          |
+| 7 | POST   | `/reset-password`   | Public            | OTP + new password (atomic)                  |
+| 8 | POST   | `/change-password`  | Required          | Change password while logged in              |
+
+### POST `/api/auth/signup`
+
+**Request body:**
 
 ```json
 {
   "name": "Jane Doe",
   "email": "jane@gmail.com",
-  "password": "Str0ng!Pass"
+  "password": "Secret@123"
 }
 ```
 
-**Response `201` — `data`:**
+| Field      | Type   | Rules                                                                 |
+|------------|--------|-----------------------------------------------------------------------|
+| `name`     | string | Required, 2–100 characters                                            |
+| `email`    | string | Required, valid format, **must be from an allowed provider** (gmail.com, googlemail.com, outlook.com, hotmail.com, live.com, yahoo.com, yahoo.co.in, icloud.com, me.com, protonmail.com, proton.me, rediffmail.com, aol.com, zoho.com) |
+| `password` | string | Min 8 chars, ≥1 uppercase, ≥1 digit, ≥1 symbol                        |
+
+A `role` field in the body is **ignored** — the account is always created as `EMPLOYEE`. A welcome email is sent in the background.
+
+**Response `201`** (also sets `at` + `rt` cookies):
 
 ```json
 {
-  "user": {
-    "id": "uuid",
-    "name": "Jane Doe",
-    "email": "jane@gmail.com",
-    "role": "EMPLOYEE",
-    "departmentId": "uuid|null",
-    "status": "ACTIVE"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/auth/login</code> — Log in; sets auth cookies.</summary>
-
-**Access:** Public
-
-**Request body**
-
-```json
-{
-  "email": "jane@gmail.com",
-  "password": "Str0ng!Pass"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "name": "Jane Doe",
-    "email": "jane@gmail.com",
-    "role": "EMPLOYEE",
-    "departmentId": "uuid|null",
-    "status": "ACTIVE"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/auth/refresh</code> — Rotate refresh token, mint new access token.</summary>
-
-**Access:** Public (rt cookie)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "departmentId": "uuid|null"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/auth/logout</code> — Revoke rt and clear cookies.</summary>
-
-**Access:** Public
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-_No `data` payload (envelope `message` only)._
-
-</details>
-
-<details><summary><code>GET /api/auth/me</code> — Current user, role/department read fresh from DB.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "name": "Jane Doe",
-    "email": "jane@gmail.com",
-    "role": "EMPLOYEE",
-    "departmentId": "uuid|null",
-    "status": "ACTIVE",
-    "department": {
+  "success": true,
+  "message": "Account created successfully",
+  "data": {
+    "user": {
       "id": "uuid",
-      "name": "Engineering"
+      "name": "Jane Doe",
+      "email": "jane@gmail.com",
+      "role": "EMPLOYEE",
+      "departmentId": null,
+      "status": "ACTIVE"
     }
   }
 }
 ```
 
-</details>
+**Errors:** `400` (validation), `409` `"Email already registered"`.
 
-<details><summary><code>POST /api/auth/forgot-password</code> — Email a 6-digit OTP (generic 200, rate-limited 1/60s).</summary>
+### POST `/api/auth/login`
 
-**Access:** Public
-
-**Request body**
+**Request body:**
 
 ```json
 {
-  "email": "jane@gmail.com"
+  "email": "admin@assetflow.com",
+  "password": "Admin@123"
 }
 ```
 
-**Response `200` — `data`:**
+**Response `200`** (sets `at` + `rt` cookies) — same `user` object as signup.
 
-_No `data` payload (envelope `message` only)._
+**Errors:** `400` missing fields, `401` `"Invalid credentials"` (identical for unknown email and wrong password — anti-enumeration), `403` `"Account is inactive. Contact your administrator."`.
 
-</details>
+### POST `/api/auth/refresh`
 
-<details><summary><code>POST /api/auth/reset-password</code> — Consume OTP + set new password (revokes all sessions).</summary>
+No body. Requires the `rt` cookie. Rotates the refresh token and sets fresh `at` + `rt` cookies.
 
-**Access:** Public
+**Response `200`:**
 
-**Request body**
+```json
+{
+  "success": true,
+  "message": "Session refreshed",
+  "data": {
+    "user": { "id": "uuid", "name": "Jane Doe", "role": "EMPLOYEE", "departmentId": null }
+  }
+}
+```
+
+**Errors:** `401` `"Session expired. Please log in again."` (missing / unknown / expired token, and **token reuse** — which also revokes every session for the user), `403` `"Account is inactive."`.
+
+### POST `/api/auth/logout`
+
+No body. Revokes the presented refresh token (if any) and clears both cookies. **Always `200`:**
+
+```json
+{ "success": true, "message": "Logged out", "data": null }
+```
+
+### GET `/api/auth/me`
+
+Auth required. Role and department are read fresh from the DB, not from the token.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "User fetched",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "name": "Jane Doe",
+      "email": "jane@gmail.com",
+      "role": "EMPLOYEE",
+      "departmentId": "uuid",
+      "status": "ACTIVE",
+      "department": { "id": "uuid", "name": "Engineering" }
+    }
+  }
+}
+```
+
+### POST `/api/auth/forgot-password`
+
+**Request body:** `{ "email": "jane@gmail.com" }`
+
+Sends a 6-digit OTP valid for **10 minutes**. Anti-enumeration: always returns the generic message even if the email is unknown.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "If that email is registered, a reset code has been sent.",
+  "data": null
+}
+```
+
+**Errors:** `429` `"Please wait 60 seconds before requesting another code."` (per-user rate limit).
+
+### POST `/api/auth/reset-password`
+
+OTP verification + password update in **one atomic request**. All existing sessions are revoked on success.
+
+**Request body:**
 
 ```json
 {
   "email": "jane@gmail.com",
   "otp": "123456",
-  "newPassword": "N3w!Password"
+  "newPassword": "NewSecret@123"
 }
 ```
 
-**Response `200` — `data`:**
+**Response `200`:** `"Password updated. You can log in now."`
 
-_No `data` payload (envelope `message` only)._
+**Errors:** `400` `"Invalid or expired code"` (each wrong OTP increments an attempts counter), `429` `"Too many attempts. Request a new code."` (after 5 failed attempts), `400` password-rule message.
 
-</details>
+### POST `/api/auth/change-password`
 
-<details><summary><code>POST /api/auth/change-password</code> — Change password; other sessions revoked.</summary>
+Auth required.
 
-**Access:** Authenticated
-
-**Request body**
+**Request body:**
 
 ```json
 {
-  "currentPassword": "Str0ng!Pass",
-  "newPassword": "N3w!Password"
+  "currentPassword": "OldSecret@123",
+  "newPassword": "NewSecret@123"
 }
 ```
 
-**Response `200` — `data`:**
+**Response `200`:** `"Password updated"`. The **current session survives**; every other session is revoked.
 
-_No `data` payload (envelope `message` only)._
+**Errors:** `400` `"Current password is incorrect"`, `400` password-rule message.
 
-</details>
+---
 
-### 17.2 Users (`/api/users`)
+## 6. Users API
 
-`PATCH /me/profile` is self-service; everything else is **Admin only**.
+Base: `/api/users` — auth required. **Everything is Admin-only except `PATCH /me/profile`.** This is the only module that can ever write `users.role`.
 
-| Method | Path | Access |
-|---|---|---|
-| `PATCH` | `/me/profile` | Authenticated |
-| `GET` | `/` | Admin |
-| `GET` | `/:id/assets` | Admin |
-| `GET` | `/:id/activity` | Admin |
-| `PATCH` | `/:id/role` | Admin |
-| `PATCH` | `/:id/department` | Admin |
-| `PATCH` | `/:id/status` | Admin |
+| # | Method | Endpoint            | Role      | Description                                    |
+|---|--------|---------------------|-----------|------------------------------------------------|
+| 1 | PATCH  | `/me/profile`       | Any user  | Update own name / designation                  |
+| 2 | GET    | `/`                 | ADMIN     | Paginated employee directory with filters      |
+| 3 | GET    | `/:id/assets`       | ADMIN     | Assets currently held by a user                |
+| 4 | GET    | `/:id/activity`     | ADMIN     | Recent activity by a user                      |
+| 5 | PATCH  | `/:id/role`         | ADMIN     | Promote / demote a user (never to ADMIN)       |
+| 6 | PATCH  | `/:id/department`   | ADMIN     | Assign or unassign (`null`) a department       |
+| 7 | PATCH  | `/:id/status`       | ADMIN     | Activate / deactivate (revokes sessions)       |
 
-<details><summary><code>PATCH /api/users/me/profile</code> — Update own name / designation (never role).</summary>
+### PATCH `/api/users/me/profile`
 
-**Access:** Authenticated
+**Request body** (at least one field):
 
-**Request body**
+```json
+{ "name": "Jane D.", "designation": "Senior Engineer" }
+```
+
+**Response `200`:**
 
 ```json
 {
-  "name": "Jane D.",
-  "designation": "Senior Analyst"
+  "success": true,
+  "message": "Profile updated",
+  "data": { "user": { "id": "uuid", "name": "Jane D.", "designation": "Senior Engineer" } }
 }
 ```
 
-**Response `200` — `data`:**
+### GET `/api/users`
+
+**Query parameters:**
+
+| Param          | Type   | Description                                        |
+|----------------|--------|----------------------------------------------------|
+| `page`         | number | Default `1`                                        |
+| `limit`        | number | Default `20`, max `100`                            |
+| `q`            | string | Search name / email (case-insensitive)             |
+| `role`         | string | `ADMIN` \| `ASSET_MANAGER` \| `DEPT_HEAD` \| `EMPLOYEE` |
+| `departmentId` | uuid   | Filter by department                               |
+| `status`       | string | `ACTIVE` \| `INACTIVE`                             |
+
+**Response `200`:**
 
 ```json
 {
-  "user": {
-    "id": "uuid",
-    "name": "Jane D.",
-    "designation": "Senior Analyst"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/users/</code> — Paginated directory.</summary>
-
-**Access:** Admin
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `page` | no | default 1 |
-| `limit` | no | default 20, max 100 |
-| `q` | no | search name/email |
-| `role` | no | ADMIN|ASSET_MANAGER|DEPT_HEAD|EMPLOYEE |
-| `departmentId` | no | filter |
-| `status` | no | ACTIVE|INACTIVE |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "users": [
-    {
-      "id": "uuid",
-      "name": "Jane Doe",
-      "email": "jane@gmail.com",
-      "role": "EMPLOYEE",
-      "department": {
-        "id": "uuid",
-        "name": "Engineering"
-      },
-      "status": "ACTIVE",
-      "createdAt": "ISO"
-    }
-  ],
-  "total": 42,
-  "page": 1,
-  "limit": 20
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/users/:id/assets</code> — Assets currently held by a user.</summary>
-
-**Access:** Admin
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "assets": [
-    {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop",
-      "status": "ALLOCATED",
-      "allocatedAt": "ISO",
-      "expectedReturnDate": "ISO|null"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/users/:id/activity</code> — Recent activity by a user.</summary>
-
-**Access:** Admin
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `limit` | no | default 5, max 20 |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "activities": [
-    {
-      "id": "uuid",
-      "actionType": "ALLOCATION",
-      "entityType": "ASSET",
-      "description": "\u2026",
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/users/:id/role</code> — Promote/demote (ADMIN never accepted).</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "role": "ASSET_MANAGER"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "name": "Jane Doe",
-    "role": "ASSET_MANAGER",
-    "departmentId": "uuid|null"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/users/:id/department</code> — Assign/unassign department.</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "departmentId": "uuid|null"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "departmentId": "uuid|null",
-    "department": {
-      "id": "uuid",
-      "name": "Engineering"
-    }
-  }
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/users/:id/status</code> — Activate/deactivate (deactivate revokes tokens).</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "status": "INACTIVE"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "status": "INACTIVE"
-  }
-}
-```
-
-</details>
-
-### 17.3 Departments (`/api/departments`)
-
-Reads: any authenticated user. Writes: **Admin only**.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated |
-| `GET` | `/:id` | Authenticated |
-| `GET` | `/:id/employees` | Authenticated |
-| `GET` | `/:id/assets` | Authenticated |
-| `POST` | `/` | Admin |
-| `PATCH` | `/:id` | Admin |
-| `DELETE` | `/:id` | Admin |
-
-<details><summary><code>GET /api/departments/</code> — List all with counts.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "departments": [
-    {
-      "id": "uuid",
-      "name": "Engineering",
-      "head": {
-        "id": "uuid",
-        "name": "Head"
-      },
-      "parentId": "uuid|null",
-      "status": "ACTIVE",
-      "employeeCount": 12,
-      "assetCount": 34
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/departments/:id</code> — Single department.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "department": {
-    "id": "uuid",
-    "name": "Engineering",
-    "head": {
-      "id": "uuid",
-      "name": "Head"
-    },
-    "parentId": "uuid|null",
-    "status": "ACTIVE",
-    "employeeCount": 12,
-    "assetCount": 34
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/departments/:id/employees</code> — Members.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "employees": [
-    {
-      "id": "uuid",
-      "name": "Jane",
-      "email": "jane@x.com",
-      "role": "EMPLOYEE",
-      "status": "ACTIVE",
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/departments/:id/assets</code> — Assets owned by dept.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "assets": [
-    {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop",
-      "status": "AVAILABLE",
-      "condition": "GOOD",
-      "location": "HQ",
-      "category": "Electronics"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/departments/</code> — Create department.</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "name": "Engineering",
-  "headId": "uuid|null",
-  "parentId": "uuid|null"
-}
-```
-
-**Response `201` — `data`:**
-
-```json
-{
-  "department": {
-    "id": "uuid",
-    "name": "Engineering",
-    "head": {
-      "id": "uuid",
-      "name": "Head"
-    },
-    "parentId": "uuid|null",
-    "status": "ACTIVE",
-    "employeeCount": 12,
-    "assetCount": 34
-  }
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/departments/:id</code> — Partial update.</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "name": "R&D",
-  "headId": "uuid|null",
-  "parentId": "uuid|null",
-  "status": "ACTIVE"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "department": {
-    "id": "uuid",
-    "name": "Engineering",
-    "head": {
-      "id": "uuid",
-      "name": "Head"
-    },
-    "parentId": "uuid|null",
-    "status": "ACTIVE",
-    "employeeCount": 12,
-    "assetCount": 34
-  }
-}
-```
-
-</details>
-
-<details><summary><code>DELETE /api/departments/:id</code> — Delete (users' dept → null; 409 if it has children).</summary>
-
-**Access:** Admin
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-_No `data` payload (envelope `message` only)._
-
-</details>
-
-### 17.4 Categories (`/api/categories`)
-
-Reads: any authenticated user. Writes: **Admin only**.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated |
-| `GET` | `/tree` | Authenticated |
-| `GET` | `/:id` | Authenticated |
-| `POST` | `/:id/custom-fields` | Admin |
-| `DELETE` | `/:id/custom-fields/:fieldId` | Admin |
-| `POST` | `/` | Admin |
-| `PATCH` | `/:id` | Admin |
-| `DELETE` | `/:id` | Admin |
-
-<details><summary><code>GET /api/categories/</code> — Flat list.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "categories": [
-    {
-      "id": "uuid",
-      "name": "Laptops",
-      "customFields": [
-        {
-          "id": "uuid",
-          "label": "\u2026",
-          "key": "\u2026",
-          "type": "text",
-          "required": false
-        }
-      ],
-      "status": "ACTIVE",
-      "parentId": "uuid|null",
-      "icon": "laptop",
-      "assetCount": 8
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/categories/tree</code> — Hierarchical view.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "tree": [
-    {
-      "id": "uuid",
-      "name": "Laptops",
-      "customFields": [
-        {
-          "id": "uuid",
-          "label": "\u2026",
-          "key": "\u2026",
-          "type": "text",
-          "required": false
-        }
-      ],
-      "status": "ACTIVE",
-      "parentId": "uuid|null",
-      "icon": "laptop",
-      "assetCount": 8,
-      "children": []
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/categories/:id</code> — Single category.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "category": {
-    "id": "uuid",
-    "name": "Laptops",
-    "customFields": [
+  "success": true,
+  "message": "Users fetched",
+  "data": {
+    "users": [
       {
         "id": "uuid",
-        "label": "\u2026",
-        "key": "\u2026",
-        "type": "text",
-        "required": false
+        "name": "Jane Doe",
+        "email": "jane@gmail.com",
+        "role": "EMPLOYEE",
+        "department": { "id": "uuid", "name": "Engineering" },
+        "status": "ACTIVE",
+        "createdAt": "2026-07-01T10:00:00.000Z"
       }
     ],
-    "status": "ACTIVE",
-    "parentId": "uuid|null",
-    "icon": "laptop",
-    "assetCount": 8
+    "total": 42,
+    "page": 1,
+    "limit": 20
   }
 }
 ```
 
-</details>
+### GET `/api/users/:id/assets`
 
-<details><summary><code>POST /api/categories/:id/custom-fields</code> — Append a custom field (type: text|number|date|select).</summary>
+Assets the user currently holds (allocation status `ACTIVE` or `RETURN_REQUESTED`).
 
-**Access:** Admin
-
-**Request body**
+**Response `200`:**
 
 ```json
 {
-  "label": "Warranty Expiry",
-  "key": "warrantyExpiry",
-  "type": "date",
-  "required": false,
-  "options": []
-}
-```
-
-**Response `201` — `data`:**
-
-```json
-{
-  "field": {
-    "id": "uuid",
-    "label": "Warranty Expiry",
-    "key": "warrantyExpiry",
-    "type": "date",
-    "required": false
+  "success": true,
+  "message": "User assets fetched",
+  "data": {
+    "assets": [
+      {
+        "id": "uuid",
+        "tag": "AF-0001",
+        "name": "MacBook Pro 14",
+        "status": "ALLOCATED",
+        "allocatedAt": "2026-07-01T10:00:00.000Z",
+        "expectedReturnDate": "2026-08-01"
+      }
+    ]
   }
 }
 ```
 
-</details>
+### GET `/api/users/:id/activity`
 
-<details><summary><code>DELETE /api/categories/:id/custom-fields/:fieldId</code> — Remove a custom field.</summary>
+**Query:** `limit` (default `5`, max `20`).
 
-**Access:** Admin
+**Response `200`:**
 
-**Request:** no body.
+```json
+{
+  "success": true,
+  "message": "User activity fetched",
+  "data": {
+    "activities": [
+      {
+        "id": "uuid",
+        "actionType": "ALLOCATION",
+        "entityType": "ALLOCATION",
+        "description": "Allocated AF-0001 (MacBook Pro 14) to Jane Doe",
+        "createdAt": "2026-07-01T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
 
-**Response `200` — `data`:**
+### PATCH `/api/users/:id/role`
 
-_No `data` payload (envelope `message` only)._
+**Request body:** `{ "role": "ASSET_MANAGER" }` — allowed values: `EMPLOYEE`, `ASSET_MANAGER`, `DEPT_HEAD`. **`ADMIN` is never accepted.**
 
-</details>
+**Response `200`:**
 
-<details><summary><code>POST /api/categories/</code> — Create category.</summary>
+```json
+{
+  "success": true,
+  "message": "Role updated to Asset Manager",
+  "data": {
+    "user": { "id": "uuid", "name": "Jane Doe", "role": "ASSET_MANAGER", "departmentId": "uuid" }
+  }
+}
+```
 
-**Access:** Admin
+**Errors:** `400` `"Invalid role"`, `400` `"Assign a department before promoting to Department Head"`, `403` `"You cannot change your own role"`, `404` user not found. If the user already has the role, returns `200` with `"User is already a <Role>"` and `data: null`.
 
-**Request body**
+### PATCH `/api/users/:id/department`
+
+**Request body:** `{ "departmentId": "uuid" }` — or `{ "departmentId": null }` to unassign.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Department updated",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "departmentId": "uuid",
+      "department": { "id": "uuid", "name": "Engineering" }
+    }
+  }
+}
+```
+
+**Errors:** `400` `"Cannot unassign department from a Department Head"`, `404` user / department not found. Idempotent no-op returns `200` with an "already assigned" message.
+
+### PATCH `/api/users/:id/status`
+
+**Request body:** `{ "status": "INACTIVE" }` — `ACTIVE` | `INACTIVE`.
+
+Deactivation revokes **all** the user's refresh tokens; their access token dies within 15 minutes and cannot be renewed.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "User deactivated",
+  "data": { "user": { "id": "uuid", "status": "INACTIVE" } }
+}
+```
+
+**Errors:** `400` `"Invalid status"`, `403` `"You cannot deactivate yourself"`, `404` user not found.
+
+---
+
+## 7. Departments API
+
+Base: `/api/departments` — auth required. **Reads: any user. Writes: Admin only.**
+
+| # | Method | Endpoint           | Role  | Description                            |
+|---|--------|--------------------|-------|----------------------------------------|
+| 1 | GET    | `/`                | Any   | List all departments                   |
+| 2 | GET    | `/:id`             | Any   | Department detail                      |
+| 3 | GET    | `/:id/employees`   | Any   | Members of a department                |
+| 4 | GET    | `/:id/assets`      | Any   | Assets owned by a department           |
+| 5 | POST   | `/`                | ADMIN | Create department                      |
+| 6 | PATCH  | `/:id`             | ADMIN | Partial update                         |
+| 7 | DELETE | `/:id`             | ADMIN | Delete (members become unassigned)     |
+
+### Department object
+
+```json
+{
+  "id": "uuid",
+  "name": "Engineering",
+  "head": { "id": "uuid", "name": "Department Head" },
+  "parentId": null,
+  "status": "ACTIVE",
+  "employeeCount": 12,
+  "assetCount": 34
+}
+```
+
+### GET `/api/departments`
+
+**Response `200`:** `{ "departments": [ <Department>, ... ] }` — sorted by name.
+
+### GET `/api/departments/:id`
+
+**Response `200`:** `{ "department": <Department> }` · **Errors:** `404`.
+
+### GET `/api/departments/:id/employees`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Department employees fetched",
+  "data": {
+    "employees": [
+      { "id": "uuid", "name": "Jane Doe", "email": "jane@gmail.com", "role": "EMPLOYEE", "status": "ACTIVE", "createdAt": "…" }
+    ]
+  }
+}
+```
+
+### GET `/api/departments/:id/assets`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Department assets fetched",
+  "data": {
+    "assets": [
+      { "id": "uuid", "tag": "AF-0001", "name": "MacBook Pro 14", "status": "AVAILABLE", "condition": "GOOD", "location": "HQ / 2F / 204", "category": "Laptops" }
+    ]
+  }
+}
+```
+
+### POST `/api/departments`
+
+**Request body:**
+
+```json
+{ "name": "Engineering", "headId": "uuid|null", "parentId": "uuid|null" }
+```
+
+| Field      | Type          | Rules                       |
+|------------|---------------|-----------------------------|
+| `name`     | string        | Required, 2–100 characters  |
+| `headId`   | uuid \| null  | Optional, must be a user    |
+| `parentId` | uuid \| null  | Optional parent department  |
+
+**Response `201`:** `{ "department": <Department> }`
+
+**Errors:** `400` name length, `404` head/parent not found, `409` `"Department name already exists"`.
+
+### PATCH `/api/departments/:id`
+
+**Request body** (any subset): `name`, `headId` (nullable), `parentId` (nullable, not itself), `status` (`ACTIVE`|`INACTIVE`).
+
+**Response `200`:** `{ "department": <Department> }` · **Errors:** `400` `"Nothing to update"` / `"A department cannot be its own parent"`, `404`, `409` duplicate name.
+
+### DELETE `/api/departments/:id`
+
+**Response `200`:** `"Department deleted"` (users' `department_id` becomes `NULL` via FK).
+
+**Errors:** `404`, `409` `"Department has child departments. Reassign them first."`.
+
+---
+
+## 8. Categories API
+
+Base: `/api/categories` — auth required. **Reads: any user. Writes: Admin only.** Categories carry per-category **custom field definitions** used by assets' `customValues`.
+
+| # | Method | Endpoint                          | Role  | Description                        |
+|---|--------|-----------------------------------|-------|------------------------------------|
+| 1 | GET    | `/`                               | Any   | Flat list                          |
+| 2 | GET    | `/tree`                           | Any   | Hierarchical tree with counts      |
+| 3 | GET    | `/:id`                            | Any   | Single category                    |
+| 4 | POST   | `/`                               | ADMIN | Create category                    |
+| 5 | PATCH  | `/:id`                            | ADMIN | Partial update                     |
+| 6 | DELETE | `/:id`                            | ADMIN | Delete category                    |
+| 7 | POST   | `/:id/custom-fields`              | ADMIN | Add a custom field definition      |
+| 8 | DELETE | `/:id/custom-fields/:fieldId`     | ADMIN | Remove a custom field definition   |
+
+### Category object
+
+```json
+{
+  "id": "uuid",
+  "name": "Laptops",
+  "customFields": [
+    { "id": "uuid", "label": "Warranty Period", "key": "warrantyPeriod", "type": "date", "required": false }
+  ],
+  "status": "ACTIVE",
+  "parentId": null,
+  "icon": "💻",
+  "assetCount": 12
+}
+```
+
+### GET `/api/categories`
+
+**Response `200`:** `{ "categories": [ <Category>, ... ] }`
+
+### GET `/api/categories/tree`
+
+**Response `200`:** `{ "tree": [ <Category & { children: [...] }>, ... ] }` — roots at the top level, children nested recursively.
+
+### GET `/api/categories/:id`
+
+**Response `200`:** `{ "category": <Category> }` · **Errors:** `404`.
+
+### POST `/api/categories`
+
+**Request body:**
 
 ```json
 {
   "name": "Laptops",
   "customFields": [],
   "parentId": "uuid|null",
-  "icon": "laptop"
+  "icon": "💻"
 }
 ```
 
-**Response `201` — `data`:**
+**Response `201`:** `{ "category": <Category> }` · **Errors:** `400` name 2–100 chars, `409` `"Category name already exists"`.
+
+### PATCH `/api/categories/:id`
+
+**Request body** (any subset): `name`, `customFields` (full array replace), `status` (`ACTIVE`|`INACTIVE`), `parentId` (nullable, not itself), `icon`.
+
+**Response `200`:** `{ "category": <Category> }` · **Errors:** `400`, `404`, `409` duplicate name.
+
+### DELETE `/api/categories/:id`
+
+**Response `200`:** `"Category deleted"` · **Errors:** `404`.
+
+### POST `/api/categories/:id/custom-fields`
+
+**Request body:**
 
 ```json
 {
-  "category": {
-    "id": "uuid",
-    "name": "Laptops",
-    "customFields": [
+  "label": "Warranty Period",
+  "key": "warrantyPeriod",
+  "type": "date",
+  "required": false,
+  "options": ["A", "B"]
+}
+```
+
+| Field      | Type     | Rules                                                    |
+|------------|----------|----------------------------------------------------------|
+| `label`    | string   | Required                                                 |
+| `key`      | string   | Optional — auto-camelCased from `label` if omitted       |
+| `type`     | string   | `text` \| `number` \| `date` \| `select` (default `text`)|
+| `required` | boolean  | Default `false`                                          |
+| `options`  | string[] | Only used when `type` is `select`                        |
+
+**Response `201`:** `{ "field": { "id": "uuid", "label": "…", "key": "…", "type": "…", "required": false } }`
+
+### DELETE `/api/categories/:id/custom-fields/:fieldId`
+
+**Response `200`:** `"Custom field removed"` · **Errors:** `404` category / field not found.
+
+---
+
+## 9. Locations API
+
+Base: `/api/locations` — auth required.
+
+### GET `/api/locations`
+
+Returns the full **building → floor → room** cascade.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Locations fetched",
+  "data": {
+    "locations": [
       {
         "id": "uuid",
-        "label": "\u2026",
-        "key": "\u2026",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "status": "ACTIVE",
-    "parentId": "uuid|null",
-    "icon": "laptop",
-    "assetCount": 8
-  }
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/categories/:id</code> — Partial update.</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "name": "Ultrabooks",
-  "customFields": [],
-  "status": "ACTIVE",
-  "parentId": "uuid|null",
-  "icon": "laptop"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "category": {
-    "id": "uuid",
-    "name": "Laptops",
-    "customFields": [
-      {
-        "id": "uuid",
-        "label": "\u2026",
-        "key": "\u2026",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "status": "ACTIVE",
-    "parentId": "uuid|null",
-    "icon": "laptop",
-    "assetCount": 8
-  }
-}
-```
-
-</details>
-
-<details><summary><code>DELETE /api/categories/:id</code> — Delete category.</summary>
-
-**Access:** Admin
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-_No `data` payload (envelope `message` only)._
-
-</details>
-
-### 17.5 Assets (`/api/assets`)
-
-List/detail **scoped**. Writes: **Admin / Asset Manager**.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated (scoped) |
-| `GET` | `/search` | Authenticated (scoped) |
-| `POST` | `/bulk-delete` | Admin |
-| `POST` | `/` | Admin / Asset Manager |
-| `GET` | `/:id` | Authenticated (scoped) |
-| `PATCH` | `/:id` | Admin / Asset Manager |
-| `GET` | `/:id/history` | Authenticated |
-| `POST` | `/:id/documents` | Admin / Asset Manager |
-| `GET` | `/:id/qr` | Authenticated |
-| `POST` | `/:id/retire` | Admin / Asset Manager |
-| `POST` | `/:id/dispose` | Admin / Asset Manager |
-| `POST` | `/:id/mark-lost` | Admin / Asset Manager |
-
-<details><summary><code>GET /api/assets/</code> — Paginated list.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `page` | no | default 1 |
-| `limit` | no | default 20, max 100 |
-| `q` | no | search name/tag/serial |
-| `categoryId` | no |  |
-| `departmentId` | no |  |
-| `status` | no | AVAILABLE|ALLOCATED|UNDER_MAINTENANCE|RETIRED|DISPOSED|LOST |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "assets": [
-    {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Dell Latitude",
-      "serialNo": "SN-123",
-      "category": {
-        "id": "uuid",
-        "name": "Electronics"
-      },
-      "department": {
-        "id": "uuid",
-        "name": "Engineering"
-      },
-      "status": "AVAILABLE",
-      "condition": "GOOD",
-      "location": "HQ / Floor 2",
-      "roomId": "uuid|null",
-      "isBookable": false,
-      "purchaseDate": "2026-01-15",
-      "purchaseCost": 1499.0,
-      "customValues": {},
-      "retirement": null,
-      "disposal": null,
-      "currentHolder": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "createdAt": "ISO"
-    }
-  ],
-  "total": 120,
-  "page": 1,
-  "limit": 20
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/assets/search</code> — Quick lookup (max 20).</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `q` | yes | search term |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "assets": [
-    {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Dell Latitude",
-      "serialNo": "SN-123",
-      "category": {
-        "id": "uuid",
-        "name": "Electronics"
-      },
-      "department": {
-        "id": "uuid",
-        "name": "Engineering"
-      },
-      "status": "AVAILABLE",
-      "condition": "GOOD",
-      "location": "HQ / Floor 2",
-      "roomId": "uuid|null",
-      "isBookable": false,
-      "purchaseDate": "2026-01-15",
-      "purchaseCost": 1499.0,
-      "customValues": {},
-      "retirement": null,
-      "disposal": null,
-      "currentHolder": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/assets/bulk-delete</code> — Delete many.</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "ids": [
-    "uuid",
-    "uuid"
-  ]
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "deletedCount": 2
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/assets/</code> — Register (tag auto-generates if empty).</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{
-  "tag": "",
-  "name": "Dell Latitude 7440",
-  "serialNo": "SN-123",
-  "categoryId": "uuid",
-  "departmentId": "uuid",
-  "condition": "GOOD",
-  "location": "HQ / Floor 2",
-  "roomId": "uuid|null",
-  "isBookable": false,
-  "purchaseDate": "2026-01-15",
-  "purchaseCost": 1499.0,
-  "customValues": {}
-}
-```
-
-**Response `201` — `data`:**
-
-```json
-{
-  "asset": {
-    "id": "uuid",
-    "tag": "AF-0001",
-    "name": "Dell Latitude",
-    "serialNo": "SN-123",
-    "category": {
-      "id": "uuid",
-      "name": "Electronics"
-    },
-    "department": {
-      "id": "uuid",
-      "name": "Engineering"
-    },
-    "status": "AVAILABLE",
-    "condition": "GOOD",
-    "location": "HQ / Floor 2",
-    "roomId": "uuid|null",
-    "isBookable": false,
-    "purchaseDate": "2026-01-15",
-    "purchaseCost": 1499.0,
-    "customValues": {},
-    "retirement": null,
-    "disposal": null,
-    "currentHolder": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "createdAt": "ISO"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/assets/:id</code> — Full detail incl. documents (403 outside scope).</summary>
-
-**Access:** Authenticated (scoped)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "asset": {
-    "id": "uuid",
-    "tag": "AF-0001",
-    "name": "Dell Latitude",
-    "serialNo": "SN-123",
-    "category": {
-      "id": "uuid",
-      "name": "Electronics"
-    },
-    "department": {
-      "id": "uuid",
-      "name": "Engineering"
-    },
-    "status": "AVAILABLE",
-    "condition": "GOOD",
-    "location": "HQ / Floor 2",
-    "roomId": "uuid|null",
-    "isBookable": false,
-    "purchaseDate": "2026-01-15",
-    "purchaseCost": 1499.0,
-    "customValues": {},
-    "retirement": null,
-    "disposal": null,
-    "currentHolder": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "createdAt": "ISO",
-    "documents": [
-      {
-        "id": "uuid",
-        "url": "https://\u2026",
-        "filename": "invoice.pdf",
-        "mime": "application/pdf",
-        "bytes": 20480,
-        "created_at": "ISO"
+        "building": "HQ Tower",
+        "city": "Ahmedabad",
+        "floors": [
+          {
+            "id": "uuid",
+            "name": "2nd Floor",
+            "rooms": [ { "id": "uuid", "name": "204" } ]
+          }
+        ]
       }
     ]
   }
 }
 ```
 
-</details>
+---
 
-<details><summary><code>PATCH /api/assets/:id</code> — Partial update.</summary>
+## 10. Assets API
 
-**Access:** Admin / Asset Manager
+Base: `/api/assets` — auth required. List/detail reads are **scoped by role** (see §3).
 
-**Request body**
+Asset lifecycle: `AVAILABLE → ALLOCATED → AVAILABLE`, `AVAILABLE → RETIRED → DISPOSED`, any → `LOST`, plus `UNDER_MAINTENANCE` while maintenance is approved.
+
+| #  | Method | Endpoint            | Role                  | Description                                  |
+|----|--------|---------------------|-----------------------|----------------------------------------------|
+| 1  | GET    | `/`                 | Any (scoped)          | Paginated list with filters                  |
+| 2  | GET    | `/search`           | Any (scoped)          | Quick lookup by tag / serial / name          |
+| 3  | POST   | `/`                 | ADMIN, ASSET_MANAGER  | Register an asset (tag auto-generates)       |
+| 4  | GET    | `/:id`              | Any (scoped)          | Full detail incl. documents                  |
+| 5  | PATCH  | `/:id`              | ADMIN, ASSET_MANAGER  | Partial update                               |
+| 6  | GET    | `/:id/history`      | Any                   | Allocation + maintenance timeline            |
+| 7  | POST   | `/:id/documents`    | ADMIN, ASSET_MANAGER  | Upload document (multipart → Cloudinary)     |
+| 8  | GET    | `/:id/qr`           | Any                   | QR code (PNG data URL) for the asset tag     |
+| 9  | POST   | `/:id/retire`       | ADMIN, ASSET_MANAGER  | AVAILABLE → RETIRED                          |
+| 10 | POST   | `/:id/dispose`      | ADMIN, ASSET_MANAGER  | RETIRED → DISPOSED                           |
+| 11 | POST   | `/:id/mark-lost`    | ADMIN, ASSET_MANAGER  | any → LOST (idempotent)                      |
+| 12 | POST   | `/bulk-delete`      | ADMIN                 | Delete many assets at once                   |
+
+### Asset object
 
 ```json
 {
-  "name": "\u2026",
-  "serialNo": "\u2026",
+  "id": "uuid",
+  "tag": "AF-0001",
+  "name": "MacBook Pro 14",
+  "serialNo": "C02XL0GYJGH5",
+  "category": { "id": "uuid", "name": "Laptops" },
+  "department": { "id": "uuid", "name": "Engineering" },
+  "status": "AVAILABLE",
+  "condition": "GOOD",
+  "location": "HQ / 2F / 204",
+  "roomId": "uuid",
+  "isBookable": false,
+  "purchaseDate": "2025-01-15",
+  "purchaseCost": 189999,
+  "customValues": { "warrantyPeriod": "2027-01-15" },
+  "retirement": null,
+  "disposal": null,
+  "currentHolder": { "id": "uuid", "name": "Jane Doe" },
+  "createdAt": "2026-07-01T10:00:00.000Z"
+}
+```
+
+`status` ∈ `AVAILABLE | ALLOCATED | UNDER_MAINTENANCE | RETIRED | DISPOSED | LOST`.
+
+### GET `/api/assets`
+
+**Query parameters:**
+
+| Param          | Type   | Description                                  |
+|----------------|--------|----------------------------------------------|
+| `page`         | number | Default `1`                                  |
+| `limit`        | number | Default `20`, max `100`                      |
+| `q`            | string | Search name / tag / serial                   |
+| `categoryId`   | uuid   | Filter by category                           |
+| `departmentId` | uuid   | Filter by department                         |
+| `status`       | string | One of the six statuses                      |
+
+**Response `200`:** `{ "assets": [ <Asset>, ... ], "total": 120, "page": 1, "limit": 20 }`
+
+### GET `/api/assets/search?q=`
+
+`q` required. Returns up to **20** matches (tag / serial / name, case-insensitive), scoped by role.
+
+**Response `200`:** `{ "assets": [ <Asset>, ... ] }` · **Errors:** `400` `"q is required"`.
+
+### POST `/api/assets`
+
+**Request body:**
+
+```json
+{
+  "tag": "AF-0042",
+  "name": "MacBook Pro 14",
+  "serialNo": "C02XL0GYJGH5",
   "categoryId": "uuid",
   "departmentId": "uuid",
-  "condition": "FAIR",
-  "location": "\u2026",
-  "roomId": "uuid|null",
-  "isBookable": true,
-  "purchaseDate": "2026-01-15",
-  "purchaseCost": 1499.0,
-  "customValues": {},
-  "status": "AVAILABLE"
+  "condition": "GOOD",
+  "location": "HQ / 2F / 204",
+  "roomId": "uuid",
+  "isBookable": false,
+  "purchaseDate": "2025-01-15",
+  "purchaseCost": 189999,
+  "customValues": { "warrantyPeriod": "2027-01-15" }
 }
 ```
 
-**Response `200` — `data`:**
+Only `name` (min 2 chars) is required. If `tag` is omitted it auto-generates as `AF-0001`, `AF-0002`, …
+
+**Response `201`:** `{ "asset": <Asset> }` · **Errors:** `400` `"Asset name is required"`, `409` `"Asset tag already exists"`.
+
+### GET `/api/assets/:id`
+
+**Response `200`:** `{ "asset": <Asset & { documents: [...] }> }` where each document is:
+
+```json
+{ "id": "uuid", "url": "https://res.cloudinary.com/…", "filename": "invoice.pdf", "mime": "application/pdf", "bytes": 82344, "created_at": "…" }
+```
+
+**Errors:** `404` `"Asset not found"`, `403` `"This record is outside your department"` (exists but out of scope).
+
+### PATCH `/api/assets/:id`
+
+**Request body** (any subset): `name`, `serialNo`, `categoryId`, `departmentId`, `condition`, `location`, `roomId`, `isBookable`, `purchaseDate`, `purchaseCost`, `customValues`, `status`.
+
+**Response `200`:** `{ "asset": <Asset> }` · **Errors:** `400` `"Invalid status"` / `"Nothing to update"`, `404`.
+
+### GET `/api/assets/:id/history`
+
+**Response `200`:**
 
 ```json
 {
-  "asset": {
-    "id": "uuid",
-    "tag": "AF-0001",
-    "name": "Dell Latitude",
-    "serialNo": "SN-123",
-    "category": {
-      "id": "uuid",
-      "name": "Electronics"
-    },
-    "department": {
-      "id": "uuid",
-      "name": "Engineering"
-    },
-    "status": "AVAILABLE",
-    "condition": "GOOD",
-    "location": "HQ / Floor 2",
-    "roomId": "uuid|null",
-    "isBookable": false,
-    "purchaseDate": "2026-01-15",
-    "purchaseCost": 1499.0,
-    "customValues": {},
-    "retirement": null,
-    "disposal": null,
-    "currentHolder": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "createdAt": "ISO"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/assets/:id/history</code> — Allocation + maintenance timeline.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "allocationHistory": [
-    {
-      "id": "uuid",
-      "date": "ISO",
-      "event": "Allocated to Jane",
-      "status": "RETURNED",
-      "expectedReturnDate": "ISO|null",
-      "returnedAt": "ISO|null",
-      "conditionOnReturn": "GOOD|null"
-    }
-  ],
-  "maintenanceHistory": [
-    {
-      "id": "uuid",
-      "date": "ISO",
-      "event": "Screen flicker",
-      "status": "RESOLVED",
-      "priority": "HIGH",
-      "resolvedAt": "ISO|null",
-      "resolutionNotes": "\u2026|null"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/assets/:id/documents</code> — multipart/form-data, field `file` (max 10 MB) → Cloudinary.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request:** `multipart/form-data` — field `file` — the document. Accepts **PNG, JPEG, or PDF only** (max 10 MB); any other type → `400 Only PNG, JPEG or PDF files are allowed`. Images are stored **compressed** (`quality: auto:good`, capped at 2000px) via Cloudinary; PDFs are stored as-is (`raw`) with their `.pdf` extension preserved.
-
-**Response `201` — `data`:**
-
-```json
-{
-  "document": {
-    "id": "uuid",
-    "url": "https://\u2026",
-    "filename": "invoice.pdf",
-    "mime": "application/pdf",
-    "bytes": 20480,
-    "created_at": "ISO"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/assets/:id/qr</code> — QR PNG data-URL encoding the tag.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "tag": "AF-0001",
-  "qrUrl": "data:image/png;base64,\u2026"
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/assets/:id/retire</code> — Requires AVAILABLE.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{
-  "reason": "End of life",
-  "retirementDate": "2026-07-12"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "asset": {
-    "id": "uuid",
-    "tag": "AF-0001",
-    "status": "RETIRED"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/assets/:id/dispose</code> — Requires RETIRED.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{
-  "method": "Recycled",
-  "notes": "\u2026",
-  "disposalDate": "2026-07-12"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "asset": {
-    "id": "uuid",
-    "tag": "AF-0001",
-    "status": "DISPOSED"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/assets/:id/mark-lost</code> — Flag LOST.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "asset": {
-    "id": "uuid",
-    "tag": "AF-0001",
-    "status": "LOST"
-  }
-}
-```
-
-</details>
-
-### 17.6 Locations (`/api/locations`)
-
-Buildings → Floors → Rooms cascade.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated |
-
-<details><summary><code>GET /api/locations/</code> — Nested tree.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "locations": [
-    {
-      "id": "uuid",
-      "building": "HQ",
-      "city": "Ahmedabad",
-      "floors": [
-        {
-          "id": "uuid",
-          "name": "Floor 2",
-          "rooms": [
-            {
-              "id": "uuid",
-              "name": "Room B2"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-</details>
-
-### 17.7 Allocations (`/api/allocations`)
-
-List scoped by holder. Create / return-approve: **Admin/AM**. Approve: **Admin/AM/Dept Head**. Return: the holder.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated (scoped) |
-| `GET` | `/kanban` | Authenticated (scoped) |
-| `GET` | `/overdue` | Authenticated (scoped) |
-| `GET` | `/:id` | Authenticated (scoped) |
-| `POST` | `/` | Admin / Asset Manager |
-| `POST` | `/:id/approve` | Admin / AM / Dept Head |
-| `POST` | `/:id/return` | Holder only |
-| `POST` | `/:id/return/approve` | Admin / Asset Manager |
-
-<details><summary><code>GET /api/allocations/</code> — List (max 200).</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `assetId` | no |  |
-| `employeeId` | no |  |
-| `departmentId` | no |  |
-| `status` | no | PENDING|ACTIVE|RETURN_REQUESTED|RETURNED|REJECTED |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "allocations": [
-    {
-      "id": "uuid",
-      "status": "ACTIVE",
-      "purpose": "Onboarding kit",
-      "asset": {
+  "success": true,
+  "message": "Asset history fetched",
+  "data": {
+    "allocationHistory": [
+      {
         "id": "uuid",
-        "tag": "AF-0001",
-        "name": "Laptop"
-      },
-      "holder": {
+        "date": "2026-07-01T10:00:00.000Z",
+        "event": "Allocated to Jane Doe",
+        "status": "RETURNED",
+        "expectedReturnDate": "2026-08-01",
+        "returnedAt": "2026-07-20T09:00:00.000Z",
+        "conditionOnReturn": "GOOD"
+      }
+    ],
+    "maintenanceHistory": [
+      {
         "id": "uuid",
-        "name": "Jane"
-      },
-      "allocatedBy": "Manager",
-      "allocatedAt": "ISO",
-      "expectedReturnDate": "ISO|null",
-      "returnRequestedAt": "ISO|null",
-      "conditionOnReturn": "null",
-      "returnNotes": "null",
-      "returnedAt": "null",
-      "isOverdue": false
-    }
-  ]
+        "date": "2026-06-10T08:00:00.000Z",
+        "event": "Screen flickering",
+        "status": "RESOLVED",
+        "priority": "MEDIUM",
+        "resolvedAt": "2026-06-12T15:00:00.000Z",
+        "resolutionNotes": "Replaced display cable"
+      }
+    ]
+  }
 }
 ```
 
-</details>
+### POST `/api/assets/:id/documents`
 
-<details><summary><code>GET /api/allocations/kanban</code> — Grouped by column.</summary>
+**Request:** `multipart/form-data` with a single **`file`** field.
 
-**Access:** Authenticated (scoped)
+| Constraint | Value                                        |
+|------------|----------------------------------------------|
+| Max size   | **10 MB**                                    |
+| MIME types | `image/png`, `image/jpeg`, `application/pdf` |
 
-**Request:** no body.
-
-**Response `200` — `data`:**
+**Response `201`:**
 
 ```json
 {
-  "columns": {
-    "PENDING": {
-      "count": 1,
-      "items": [
-        {
-          "id": "uuid",
-          "status": "ACTIVE",
-          "purpose": "Onboarding kit",
-          "asset": {
-            "id": "uuid",
-            "tag": "AF-0001",
-            "name": "Laptop"
-          },
-          "holder": {
-            "id": "uuid",
-            "name": "Jane"
-          },
-          "allocatedBy": "Manager",
-          "allocatedAt": "ISO",
-          "expectedReturnDate": "ISO|null",
-          "returnRequestedAt": "ISO|null",
-          "conditionOnReturn": "null",
-          "returnNotes": "null",
-          "returnedAt": "null",
-          "isOverdue": false
-        }
-      ]
-    },
-    "ACTIVE": {
-      "count": 0,
-      "items": []
-    },
-    "RETURN_REQUESTED": {
-      "count": 0,
-      "items": []
-    },
-    "OVERDUE": {
-      "count": 0,
-      "items": []
+  "success": true,
+  "message": "Document uploaded",
+  "data": {
+    "document": { "id": "uuid", "url": "https://res.cloudinary.com/…", "filename": "invoice.pdf", "mime": "application/pdf", "bytes": 82344, "created_at": "…" }
+  }
+}
+```
+
+**Errors:** `400` missing file / disallowed type (`"Only PNG, JPEG or PDF files are allowed"`), `413` file too large, `404` asset not found, `503` `"Cloudinary is not configured on the server"`.
+
+### GET `/api/assets/:id/qr`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "QR generated",
+  "data": { "tag": "AF-0001", "qrUrl": "data:image/png;base64,…" }
+}
+```
+
+The QR encodes `{"app":"assetflow","assetId":"<uuid>","tag":"AF-0001"}`.
+
+### POST `/api/assets/:id/retire`
+
+Asset must currently be `AVAILABLE`.
+
+**Request body (optional):** `{ "reason": "End of life", "retirementDate": "2026-07-12" }`
+
+**Response `200`:** `{ "asset": { "id": "uuid", "tag": "AF-0001", "status": "RETIRED" } }`
+
+**Errors:** `400` `"Asset must be Available to retire"`, `404`.
+
+### POST `/api/assets/:id/dispose`
+
+Asset must currently be `RETIRED`.
+
+**Request body (optional):** `{ "method": "E-waste recycler", "notes": "…", "disposalDate": "2026-07-12" }`
+
+**Response `200`:** `{ "asset": { "id": "uuid", "tag": "AF-0001", "status": "DISPOSED" } }`
+
+**Errors:** `400` `"Asset must be Retired before disposal"`, `404`.
+
+### POST `/api/assets/:id/mark-lost`
+
+No body. Idempotent — if already `LOST`, returns `200` with `"Asset is already marked as lost"`.
+
+**Response `200`:** `{ "asset": { "id": "uuid", "tag": "AF-0001", "status": "LOST" } }`
+
+### POST `/api/assets/bulk-delete`
+
+**Request body:** `{ "ids": ["uuid", "uuid"] }`
+
+**Response `200`:** `{ "deletedCount": 2 }` with message `"2 asset(s) deleted"`.
+
+**Errors:** `400` `"ids must be a non-empty array of asset ids"`.
+
+---
+
+## 11. Allocations API
+
+Base: `/api/allocations` — auth required, list reads scoped by role.
+
+Allocation status: `PENDING → ACTIVE → RETURN_REQUESTED → RETURNED` (or `REJECTED`).
+
+| # | Method | Endpoint               | Role                             | Description                                |
+|---|--------|------------------------|----------------------------------|--------------------------------------------|
+| 1 | GET    | `/`                    | Any (scoped)                     | List (filters below), max 200 rows         |
+| 2 | GET    | `/kanban`              | Any (scoped)                     | Board grouped by status column             |
+| 3 | GET    | `/overdue`             | Any (scoped)                     | Overdue allocations with `daysOverdue`     |
+| 4 | GET    | `/:id`                 | Any (scoped)                     | Single allocation                          |
+| 5 | POST   | `/`                    | ADMIN, ASSET_MANAGER             | Allocate an available asset                |
+| 6 | POST   | `/:id/approve`         | ADMIN, ASSET_MANAGER, DEPT_HEAD* | Approve a PENDING allocation               |
+| 7 | POST   | `/:id/return`          | Current holder                   | Initiate return with condition check-in    |
+| 8 | POST   | `/:id/return/approve`  | ADMIN, ASSET_MANAGER             | Confirm check-in → asset AVAILABLE again   |
+
+\* Dept Head only when the holder is in their department.
+
+### Allocation object
+
+```json
+{
+  "id": "uuid",
+  "status": "ACTIVE",
+  "purpose": "Project work",
+  "asset": { "id": "uuid", "tag": "AF-0001", "name": "MacBook Pro 14" },
+  "holder": { "id": "uuid", "name": "Jane Doe" },
+  "allocatedBy": "Asset Manager",
+  "allocatedAt": "2026-07-01T10:00:00.000Z",
+  "expectedReturnDate": "2026-08-01",
+  "returnRequestedAt": null,
+  "conditionOnReturn": null,
+  "returnNotes": null,
+  "returnedAt": null,
+  "isOverdue": false
+}
+```
+
+### GET `/api/allocations`
+
+**Query filters:** `assetId` (uuid), `employeeId` (uuid), `departmentId` (uuid), `status` (`PENDING`|`ACTIVE`|`RETURN_REQUESTED`|`RETURNED`|`REJECTED`).
+
+**Response `200`:** `{ "allocations": [ <Allocation>, ... ] }`
+
+### GET `/api/allocations/kanban`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Kanban data fetched",
+  "data": {
+    "columns": {
+      "PENDING":          { "count": 2,  "items": [ <Allocation> ] },
+      "ACTIVE":           { "count": 14, "items": [ <Allocation> ] },
+      "RETURN_REQUESTED": { "count": 1,  "items": [ <Allocation> ] },
+      "OVERDUE":          { "count": 3,  "items": [ <Allocation> ] }
     }
   }
 }
 ```
 
-</details>
+Overdue rows land in `OVERDUE` regardless of underlying status; each column carries at most 50 items.
 
-<details><summary><code>GET /api/allocations/overdue</code> — Past due, with daysOverdue.</summary>
+### GET `/api/allocations/overdue`
 
-**Access:** Authenticated (scoped)
+**Response `200`:** `{ "overdue": [ <Allocation & { daysOverdue: 5 }>, ... ] }`
 
-**Request:** no body.
+### GET `/api/allocations/:id`
 
-**Response `200` — `data`:**
+**Response `200`:** `{ "allocation": <Allocation> }` · **Errors:** `404`.
 
-```json
-{
-  "overdue": [
-    {
-      "id": "uuid",
-      "status": "ACTIVE",
-      "purpose": "Onboarding kit",
-      "asset": {
-        "id": "uuid",
-        "tag": "AF-0001",
-        "name": "Laptop"
-      },
-      "holder": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "allocatedBy": "Manager",
-      "allocatedAt": "ISO",
-      "expectedReturnDate": "ISO|null",
-      "returnRequestedAt": "ISO|null",
-      "conditionOnReturn": "null",
-      "returnNotes": "null",
-      "returnedAt": "null",
-      "isOverdue": false,
-      "daysOverdue": 3
-    }
-  ]
-}
-```
+### POST `/api/allocations`
 
-</details>
-
-<details><summary><code>GET /api/allocations/:id</code> — Single allocation.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "allocation": {
-    "id": "uuid",
-    "status": "ACTIVE",
-    "purpose": "Onboarding kit",
-    "asset": {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop"
-    },
-    "holder": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "allocatedBy": "Manager",
-    "allocatedAt": "ISO",
-    "expectedReturnDate": "ISO|null",
-    "returnRequestedAt": "ISO|null",
-    "conditionOnReturn": "null",
-    "returnNotes": "null",
-    "returnedAt": "null",
-    "isOverdue": false
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/allocations/</code> — Allocate an AVAILABLE asset to an ACTIVE user.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
+**Request body:**
 
 ```json
 {
   "assetId": "uuid",
   "employeeId": "uuid",
-  "purpose": "Onboarding kit",
-  "expectedReturnDate": "2026-12-31"
+  "purpose": "Project work",
+  "expectedReturnDate": "2026-08-01"
 }
 ```
 
-**Response `201` — `data`:**
+(`holderId` is accepted as an alias for `employeeId`.) The asset must be `AVAILABLE` and the user `ACTIVE`. On success the asset becomes `ALLOCATED` and the holder is notified.
+
+**Response `201`:** `{ "allocation": <Allocation> }` (status `ACTIVE`)
+
+**Errors:** `400` `"Asset is <STATUS> — only Available assets can be allocated"` / `"User is inactive"`, `404` asset / user not found.
+
+### POST `/api/allocations/:id/approve`
+
+No body. Allocation must be `PENDING`. Sets it `ACTIVE`, marks the asset `ALLOCATED`, notifies the holder.
+
+**Response `200`:** `{ "allocation": { "id": "uuid", "status": "ACTIVE" } }`
+
+**Errors:** `400` `"Only pending allocations can be approved"`, `403` out-of-department (Dept Head), `404`.
+
+### POST `/api/allocations/:id/return`
+
+Only the **current holder** may call this; allocation must be `ACTIVE`.
+
+**Request body (optional):** `{ "condition": "GOOD", "notes": "Minor scratch on lid" }` (condition defaults to `GOOD`).
+
+**Response `200`:** `{ "allocation": { "id": "uuid", "status": "RETURN_REQUESTED" } }` with message `"Return requested — awaiting Asset Manager approval"`.
+
+**Errors:** `403` `"Only the current holder can initiate a return"`, `400` `"Only active allocations can be returned"`, `404`.
+
+### POST `/api/allocations/:id/return/approve`
+
+No body. Allocation must be `RETURN_REQUESTED`. Sets it `RETURNED`, the asset becomes `AVAILABLE`, holder is notified.
+
+**Response `200`:** `{ "allocation": { "id": "uuid", "status": "RETURNED" } }`
+
+**Errors:** `400` `"No pending return on this allocation"`, `404`.
+
+---
+
+## 12. Transfers API
+
+Base: `/api/transfers` — auth required.
+
+Transfer status: `REQUESTED → APPROVED | REJECTED`.
+
+| # | Method | Endpoint         | Role                             | Description                                  |
+|---|--------|------------------|----------------------------------|----------------------------------------------|
+| 1 | GET    | `/`              | Any (scoped)                     | List — Employee sees own (either side), Dept Head their dept, Admin/AM all |
+| 2 | GET    | `/:id`           | Any (participants / managers)    | Single transfer                              |
+| 3 | POST   | `/`              | Any                              | Request transfer of an allocated asset       |
+| 4 | POST   | `/:id/approve`   | ADMIN, ASSET_MANAGER, DEPT_HEAD* | Approve — reassigns the allocation           |
+| 5 | POST   | `/:id/reject`    | ADMIN, ASSET_MANAGER, DEPT_HEAD* | Reject with reason                           |
+
+\* Dept Head only when the **target user** is in their department.
+
+### Transfer object
 
 ```json
 {
-  "allocation": {
-    "id": "uuid",
-    "status": "ACTIVE",
-    "purpose": "Onboarding kit",
-    "asset": {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop"
-    },
-    "holder": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "allocatedBy": "Manager",
-    "allocatedAt": "ISO",
-    "expectedReturnDate": "ISO|null",
-    "returnRequestedAt": "ISO|null",
-    "conditionOnReturn": "null",
-    "returnNotes": "null",
-    "returnedAt": "null",
-    "isOverdue": false
-  }
+  "id": "uuid",
+  "status": "REQUESTED",
+  "reason": "Moving to new project team",
+  "decisionReason": null,
+  "asset": { "id": "uuid", "tag": "AF-0001", "name": "MacBook Pro 14" },
+  "from": { "id": "uuid", "name": "Jane Doe" },
+  "to": { "id": "uuid", "name": "Arjun Nair" },
+  "decidedBy": null,
+  "createdAt": "2026-07-10T10:00:00.000Z",
+  "decidedAt": null
 }
 ```
 
-</details>
+### GET `/api/transfers`
 
-<details><summary><code>POST /api/allocations/:id/approve</code> — PENDING → ACTIVE.</summary>
+**Query filter:** `status` (`REQUESTED`|`APPROVED`|`REJECTED`). Max 200 rows.
 
-**Access:** Admin / AM / Dept Head
+**Response `200`:** `{ "transfers": [ <Transfer>, ... ] }`
 
-**Request body**
+### GET `/api/transfers/:id`
+
+**Response `200`:** `{ "transfer": <Transfer> }` · **Errors:** `403` (employee who is not a participant), `404`.
+
+### POST `/api/transfers`
+
+**Request body:**
 
 ```json
-{}
+{ "assetId": "uuid", "toUserId": "uuid", "reason": "Moving to new project team" }
 ```
 
-**Response `200` — `data`:**
+(`to` is accepted as an alias for `toUserId`.) The asset must be `ALLOCATED`; `from` is derived from the current active allocation.
+
+**Response `201`:** `{ "transfer": <Transfer> }`
+
+**Errors:** `400` `"Cannot transfer an asset to yourself"` / `"Only allocated assets can be transferred"` / `"Target user is inactive"`, `404` asset / target user, `409` `"A transfer request for this asset is already pending"`.
+
+### POST `/api/transfers/:id/approve`
+
+No body. Closes the old holder's allocation (`RETURNED`), opens a new `ACTIVE` allocation for the target, keeps the asset `ALLOCATED`, and notifies both parties.
+
+**Response `200`:** `{ "transfer": { "id": "uuid", "status": "APPROVED" } }`
+
+**Errors:** `400` `"Transfer request is already decided"`, `403` out-of-department, `404`.
+
+### POST `/api/transfers/:id/reject`
+
+**Request body (optional):** `{ "reason": "Asset needed by current team" }`
+
+**Response `200`:** `{ "transfer": { "id": "uuid", "status": "REJECTED" } }`
+
+---
+
+## 13. Resources & Bookings API
+
+Bases: `/api/resources` and `/api/bookings` — auth required. A **resource** is any asset with `isBookable: true`.
+
+Booking status is **derived from time**: `UPCOMING` (before start) → `ONGOING` → `COMPLETED`, or `CANCELLED`.
+
+| #  | Method | Endpoint                          | Role                              | Description                          |
+|----|--------|-----------------------------------|-----------------------------------|--------------------------------------|
+| 1  | GET    | `/api/resources`                  | Any                               | Bookable assets                      |
+| 2  | GET    | `/api/resources/:id/calendar`     | Any                               | Confirmed bookings in a window       |
+| 3  | GET    | `/api/resources/:id/availability` | Any                               | Hour-grid free slots for a day       |
+| 4  | GET    | `/api/bookings`                   | Any (scoped)                      | List with filters                    |
+| 5  | GET    | `/api/bookings/my`                | Any                               | Current user's bookings              |
+| 6  | POST   | `/api/bookings/check-availability`| Any                               | Overlap check + alternatives         |
+| 7  | POST   | `/api/bookings`                   | Any                               | Create (conflict-checked)            |
+| 8  | POST   | `/api/bookings/recurring`         | Any                               | Daily/weekly series                  |
+| 9  | GET    | `/api/bookings/:id`               | Owner / Dept Head* / Admin / AM   | Single booking                       |
+| 10 | POST   | `/api/bookings/:id/cancel`        | Owner / Dept Head* / Admin / AM   | Cancel                               |
+| 11 | POST   | `/api/bookings/:id/reschedule`    | Owner / Dept Head* / Admin / AM   | Move to a new (conflict-checked) slot|
+
+\* Dept Head of the booker's department.
+
+### Booking object
 
 ```json
 {
-  "allocation": {
-    "id": "uuid",
-    "status": "ACTIVE"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/allocations/:id/return</code> — Initiate return with condition.</summary>
-
-**Access:** Holder only
-
-**Request body**
-
-```json
-{
-  "condition": "GOOD",
-  "notes": "\u2026"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "allocation": {
-    "id": "uuid",
-    "status": "RETURN_REQUESTED"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/allocations/:id/return/approve</code> — Confirm check-in; asset → AVAILABLE.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "allocation": {
-    "id": "uuid",
-    "status": "RETURNED"
-  }
-}
-```
-
-</details>
-
-### 17.8 Transfers (`/api/transfers`)
-
-Anyone requests; **Admin/AM/Dept Head** decide. Scoped list.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated (scoped) |
-| `GET` | `/:id` | Authenticated (scoped) |
-| `POST` | `/` | Authenticated |
-| `POST` | `/:id/approve` | Admin / AM / Dept Head |
-| `POST` | `/:id/reject` | Admin / AM / Dept Head |
-
-<details><summary><code>GET /api/transfers/</code> — List (max 200).</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `status` | no | REQUESTED|APPROVED|REJECTED |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "transfers": [
-    {
-      "id": "uuid",
-      "status": "REQUESTED",
-      "reason": "\u2026",
-      "decisionReason": "null",
-      "asset": {
-        "id": "uuid",
-        "tag": "AF-0001",
-        "name": "Laptop"
-      },
-      "from": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "to": {
-        "id": "uuid",
-        "name": "Arjun"
-      },
-      "decidedBy": "null",
-      "createdAt": "ISO",
-      "decidedAt": "null"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/transfers/:id</code> — Single transfer.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "transfer": {
-    "id": "uuid",
-    "status": "REQUESTED",
-    "reason": "\u2026",
-    "decisionReason": "null",
-    "asset": {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop"
-    },
-    "from": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "to": {
-      "id": "uuid",
-      "name": "Arjun"
-    },
-    "decidedBy": "null",
-    "createdAt": "ISO",
-    "decidedAt": "null"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/transfers/</code> — Request transfer of an ALLOCATED asset.</summary>
-
-**Access:** Authenticated
-
-**Request body**
-
-```json
-{
-  "assetId": "uuid",
-  "toUserId": "uuid",
-  "reason": "\u2026"
-}
-```
-
-**Response `201` — `data`:**
-
-```json
-{
-  "transfer": {
-    "id": "uuid",
-    "status": "REQUESTED",
-    "reason": "\u2026",
-    "decisionReason": "null",
-    "asset": {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop"
-    },
-    "from": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "to": {
-      "id": "uuid",
-      "name": "Arjun"
-    },
-    "decidedBy": "null",
-    "createdAt": "ISO",
-    "decidedAt": "null"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/transfers/:id/approve</code> — Move allocation to target.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request body**
-
-```json
-{}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "transfer": {
-    "id": "uuid",
-    "status": "APPROVED"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/transfers/:id/reject</code> — Reject with reason.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request body**
-
-```json
-{
-  "reason": "\u2026"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "transfer": {
-    "id": "uuid",
-    "status": "REJECTED"
-  }
-}
-```
-
-</details>
-
-### 17.9 Resources (bookable) (`/api/resources`)
-
-Bookable assets and their calendars.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated |
-| `GET` | `/:id/calendar` | Authenticated |
-| `GET` | `/:id/availability` | Authenticated |
-
-<details><summary><code>GET /api/resources/</code> — Bookable, in-service assets.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "resources": [
-    {
-      "id": "uuid",
-      "tag": "AF-0100",
-      "name": "Room B2",
-      "location": "HQ",
-      "status": "AVAILABLE"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/resources/:id/calendar</code> — Confirmed bookings in a window (default next 7 days).</summary>
-
-**Access:** Authenticated
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `from` | no | ISO |
-| `to` | no | ISO |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "bookings": [
-    {
-      "id": "uuid",
-      "resource": {
-        "id": "uuid",
-        "tag": "AF-0100",
-        "name": "Room B2"
-      },
-      "bookedBy": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "start": "ISO",
-      "end": "ISO",
-      "purpose": "Sprint planning",
-      "attendees": [],
-      "seriesId": "uuid|null",
-      "status": "UPCOMING",
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/resources/:id/availability</code> — Hourly 09:00–18:00 slot grid.</summary>
-
-**Access:** Authenticated
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `date` | yes | YYYY-MM-DD |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "date": "2026-07-14",
-  "slots": [
-    {
-      "start": "09:00",
-      "end": "10:00",
-      "available": true
-    }
-  ]
-}
-```
-
-</details>
-
-### 17.10 Bookings (`/api/bookings`)
-
-Conflict-checked. Time input: `{start,end}` ISO **or** `{date,startTime,endTime}`. Manage = owner, booker's Dept Head, or Admin/AM.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated (scoped) |
-| `GET` | `/my` | Authenticated |
-| `POST` | `/check-availability` | Authenticated |
-| `POST` | `/` | Authenticated |
-| `POST` | `/recurring` | Authenticated |
-| `GET` | `/:id` | Manager of booking |
-| `POST` | `/:id/cancel` | Manager of booking |
-| `POST` | `/:id/reschedule` | Manager of booking |
-
-<details><summary><code>GET /api/bookings/</code> — List (max 200); status derived.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `resourceId` | no |  |
-| `status` | no | UPCOMING|ONGOING|COMPLETED|CANCELLED |
-| `date` | no | YYYY-MM-DD |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "bookings": [
-    {
-      "id": "uuid",
-      "resource": {
-        "id": "uuid",
-        "tag": "AF-0100",
-        "name": "Room B2"
-      },
-      "bookedBy": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "start": "ISO",
-      "end": "ISO",
-      "purpose": "Sprint planning",
-      "attendees": [],
-      "seriesId": "uuid|null",
-      "status": "UPCOMING",
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/bookings/my</code> — Caller's bookings.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "bookings": [
-    {
-      "id": "uuid",
-      "resource": {
-        "id": "uuid",
-        "tag": "AF-0100",
-        "name": "Room B2"
-      },
-      "bookedBy": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "start": "ISO",
-      "end": "ISO",
-      "purpose": "Sprint planning",
-      "attendees": [],
-      "seriesId": "uuid|null",
-      "status": "UPCOMING",
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/bookings/check-availability</code> — Overlap check + alternatives.</summary>
-
-**Access:** Authenticated
-
-**Request body**
-
-```json
-{
-  "resourceId": "uuid",
-  "date": "2026-07-14",
-  "startTime": "09:00",
-  "endTime": "10:00"
-}
-```
-
-**Response `200` — `data`:**
-
-Available:
-```json
-{
-  "available": true
-}
-```
-Conflict:
-```json
-{
-  "available": false,
-  "conflict": {
-    "bookedBy": "Jane",
-    "start": "ISO",
-    "end": "ISO"
-  },
-  "alternatives": [
-    {
-      "resourceId": "uuid",
-      "resourceName": "Room A1"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/bookings/</code> — Create (409 on conflict).</summary>
-
-**Access:** Authenticated
-
-**Request body**
-
-```json
-{
-  "resourceId": "uuid",
-  "start": "2026-07-14T09:00:00",
-  "end": "2026-07-14T10:00:00",
+  "id": "uuid",
+  "resource": { "id": "uuid", "tag": "AF-0100", "name": "Conference Room A" },
+  "bookedBy": { "id": "uuid", "name": "Jane Doe" },
+  "start": "2026-07-14T09:30:00.000Z",
+  "end": "2026-07-14T10:30:00.000Z",
   "purpose": "Sprint planning",
-  "attendees": []
+  "attendees": ["jane@gmail.com"],
+  "seriesId": null,
+  "status": "UPCOMING",
+  "createdAt": "2026-07-12T08:00:00.000Z"
 }
 ```
 
-**Response `201` — `data`:**
+### Time-range input (used by create / check / reschedule)
+
+Either of the following forms is accepted:
+
+```json
+{ "start": "2026-07-14T09:30:00Z", "end": "2026-07-14T10:30:00Z" }
+```
+
+```json
+{ "date": "2026-07-14", "startTime": "09:30", "endTime": "10:30" }
+```
+
+`end` must be after `start`, otherwise `400` `"Provide start/end (ISO) or date + startTime + endTime"`.
+
+### GET `/api/resources`
+
+Bookable assets not in `RETIRED`/`DISPOSED`/`LOST`.
+
+**Response `200`:** `{ "resources": [ { "id", "tag", "name", "location", "status" } ] }`
+
+### GET `/api/resources/:id/calendar?from=&to=`
+
+`from`/`to` optional ISO dates (defaults: now → +7 days).
+
+**Response `200`:** `{ "bookings": [ <Booking>, ... ] }`
+
+### GET `/api/resources/:id/availability?date=YYYY-MM-DD`
+
+`date` required. Returns a 09:00–18:00 hour grid.
+
+**Response `200`:**
 
 ```json
 {
-  "booking": {
-    "id": "uuid",
-    "resource": {
-      "id": "uuid",
-      "tag": "AF-0100",
-      "name": "Room B2"
-    },
-    "bookedBy": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "start": "ISO",
-    "end": "ISO",
-    "purpose": "Sprint planning",
-    "attendees": [],
-    "seriesId": "uuid|null",
-    "status": "UPCOMING",
-    "createdAt": "ISO"
+  "success": true,
+  "message": "Availability fetched",
+  "data": {
+    "date": "2026-07-14",
+    "slots": [
+      { "start": "09:00", "end": "10:00", "available": true },
+      { "start": "10:00", "end": "11:00", "available": false }
+    ]
   }
 }
 ```
 
-</details>
+### GET `/api/bookings`
 
-<details><summary><code>POST /api/bookings/recurring</code> — Daily/weekly series (cap 60; skips conflicts).</summary>
+**Query filters:** `resourceId` (uuid), `date` (`YYYY-MM-DD`), `status` (`UPCOMING`|`ONGOING`|`COMPLETED`|`CANCELLED`). Max 200 rows.
 
-**Access:** Authenticated
+**Response `200`:** `{ "bookings": [ <Booking>, ... ] }`
 
-**Request body**
+### GET `/api/bookings/my`
+
+**Response `200`:** `{ "bookings": [ <Booking>, ... ] }` (max 100).
+
+### POST `/api/bookings/check-availability`
+
+**Request body:** `{ "resourceId": "uuid", ...timeRange }`
+
+**Response `200` (free):** `{ "available": true }`
+
+**Response `200` (busy):**
+
+```json
+{
+  "success": true,
+  "message": "Slot conflicts with existing booking",
+  "data": {
+    "available": false,
+    "conflict": { "bookedBy": "Arjun Nair", "start": "…", "end": "…" },
+    "alternatives": [ { "resourceId": "uuid", "resourceName": "Conference Room B" } ]
+  }
+}
+```
+
+### POST `/api/bookings`
+
+**Request body:**
+
+```json
+{
+  "resourceId": "uuid",
+  "date": "2026-07-14",
+  "startTime": "09:30",
+  "endTime": "10:30",
+  "purpose": "Sprint planning",
+  "attendees": ["jane@gmail.com"]
+}
+```
+
+**Response `201`:** `{ "booking": <Booking> }`
+
+**Errors:** `400` `"This asset is not bookable"` / invalid range, `404` resource, `409` `"Requested slot conflicts with an existing booking"`.
+
+### POST `/api/bookings/recurring`
+
+**Request body:**
 
 ```json
 {
   "resourceId": "uuid",
   "frequency": "WEEKLY",
   "startDate": "2026-07-14",
-  "endDate": "2026-08-14",
-  "startTime": "09:00",
-  "endTime": "10:00",
-  "purpose": "Standup",
+  "endDate": "2026-09-14",
+  "startTime": "09:30",
+  "endTime": "10:30",
+  "purpose": "Weekly standup",
   "attendees": []
 }
 ```
 
-**Response `201` — `data`:**
+`frequency` ∈ `DAILY | WEEKLY` (default `WEEKLY`). Conflicting occurrences are skipped and reported; a safety cap of 60 occurrences applies.
+
+**Response `201`:**
 
 ```json
 {
-  "seriesId": "uuid",
-  "bookingsCreated": 4,
-  "conflicts": [
-    "2026-07-28"
-  ]
+  "success": true,
+  "message": "Recurring booking created (9 slots)",
+  "data": { "seriesId": "uuid", "bookingsCreated": 9, "conflicts": ["2026-08-04"] }
 }
 ```
 
-</details>
+### GET `/api/bookings/:id`
 
-<details><summary><code>GET /api/bookings/:id</code> — Single booking.</summary>
+**Response `200`:** `{ "booking": <Booking> }` · **Errors:** `403`, `404`.
 
-**Access:** Manager of booking
+### POST `/api/bookings/:id/cancel`
 
-**Request:** no body.
+No body. **Response `200`:** `{ "booking": { "id": "uuid", "status": "CANCELLED" } }` · **Errors:** `400` `"Booking is already cancelled"`, `403`, `404`. The booker is notified if someone else cancels.
 
-**Response `200` — `data`:**
+### POST `/api/bookings/:id/reschedule`
+
+**Request body:** a time range (see above). Re-runs the overlap check excluding this booking.
+
+**Response `200`:** `{ "booking": { "id": "uuid", "start": "…", "end": "…", "status": "UPCOMING" } }` · **Errors:** `400` cancelled / invalid range, `409` conflict, `403`, `404`.
+
+---
+
+## 14. Maintenance API
+
+Base: `/api/maintenance` — auth required.
+
+Status flow: `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → RESOLVED`, with `REJECTED` (from PENDING) and `ESCALATED` (from any open state) as branches. Approval puts the asset `UNDER_MAINTENANCE`; resolving returns it to `AVAILABLE` (or `ALLOCATED` if it still has an active allocation).
+
+| #  | Method | Endpoint           | Role                          | Description                                 |
+|----|--------|--------------------|-------------------------------|---------------------------------------------|
+| 1  | GET    | `/`                | Any (scoped¹)                 | List with filters, max 200                  |
+| 2  | GET    | `/:id`             | Any                           | Detail incl. `commentCount`                 |
+| 3  | POST   | `/`                | Any                           | Raise a request                             |
+| 4  | POST   | `/:id/approve`     | ADMIN, ASSET_MANAGER          | PENDING → APPROVED (asset UNDER_MAINTENANCE)|
+| 5  | POST   | `/:id/reject`      | ADMIN, ASSET_MANAGER          | PENDING → REJECTED with reason              |
+| 6  | POST   | `/:id/assign`      | ADMIN, ASSET_MANAGER          | Assign technician (user id or free-text name)|
+| 7  | POST   | `/:id/start`       | Assigned technician / AM / Admin | TECHNICIAN_ASSIGNED → IN_PROGRESS        |
+| 8  | POST   | `/:id/resolve`     | Assigned technician / AM / Admin | → RESOLVED (asset back in service)       |
+| 9  | POST   | `/:id/escalate`    | ADMIN, ASSET_MANAGER          | → ESCALATED, priority forced CRITICAL       |
+| 10 | GET    | `/:id/comments`    | Any                           | Comment thread                              |
+| 11 | POST   | `/:id/comments`    | Any                           | Add a comment                               |
+
+¹ Employees see requests they raised **or** where they are the assigned technician.
+
+### Maintenance request object
 
 ```json
 {
-  "booking": {
-    "id": "uuid",
-    "resource": {
-      "id": "uuid",
-      "tag": "AF-0100",
-      "name": "Room B2"
-    },
-    "bookedBy": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "start": "ISO",
-    "end": "ISO",
-    "purpose": "Sprint planning",
-    "attendees": [],
-    "seriesId": "uuid|null",
-    "status": "UPCOMING",
-    "createdAt": "ISO"
-  }
+  "id": "uuid",
+  "issue": "Screen flickering",
+  "issueType": "HARDWARE",
+  "priority": "MEDIUM",
+  "status": "PENDING",
+  "asset": { "id": "uuid", "tag": "AF-0001", "name": "MacBook Pro 14" },
+  "raisedBy": { "id": "uuid", "name": "Jane Doe" },
+  "technician": null,
+  "startedAt": null,
+  "resolvedAt": null,
+  "resolutionNotes": null,
+  "cost": null,
+  "rejectedReason": null,
+  "escalated": null,
+  "createdAt": "2026-07-10T10:00:00.000Z"
 }
 ```
 
-</details>
+`priority` ∈ `LOW | MEDIUM | HIGH | CRITICAL`.
 
-<details><summary><code>POST /api/bookings/:id/cancel</code> — Cancel.</summary>
+### GET `/api/maintenance`
 
-**Access:** Manager of booking
+**Query filters:** `assetId` (uuid), `status` (any status above), `priority`.
 
-**Request body**
+**Response `200`:** `{ "requests": [ <MaintenanceRequest>, ... ] }`
 
-```json
-{}
-```
+### GET `/api/maintenance/:id`
 
-**Response `200` — `data`:**
+**Response `200`:** `{ "request": <MaintenanceRequest & { commentCount: 3 }> }` · **Errors:** `404`.
 
-```json
-{
-  "booking": {
-    "id": "uuid",
-    "status": "CANCELLED"
-  }
-}
-```
+### POST `/api/maintenance`
 
-</details>
-
-<details><summary><code>POST /api/bookings/:id/reschedule</code> — Move (re-runs overlap check).</summary>
-
-**Access:** Manager of booking
-
-**Request body**
-
-```json
-{
-  "start": "2026-07-14T11:00:00",
-  "end": "2026-07-14T12:00:00"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "booking": {
-    "id": "uuid",
-    "start": "ISO",
-    "end": "ISO",
-    "status": "UPCOMING"
-  }
-}
-```
-
-</details>
-
-### 17.11 Maintenance (`/api/maintenance`)
-
-Pipeline `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → RESOLVED` (+ REJECTED, ESCALATED). List scoped.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated (scoped) |
-| `GET` | `/:id` | Authenticated |
-| `POST` | `/` | Authenticated |
-| `POST` | `/:id/approve` | Admin / Asset Manager |
-| `POST` | `/:id/reject` | Admin / Asset Manager |
-| `POST` | `/:id/assign` | Admin / Asset Manager |
-| `POST` | `/:id/start` | Assigned technician / Manager |
-| `POST` | `/:id/resolve` | Technician / Manager |
-| `POST` | `/:id/escalate` | Admin / Asset Manager |
-| `GET` | `/:id/comments` | Authenticated |
-| `POST` | `/:id/comments` | Authenticated |
-
-<details><summary><code>GET /api/maintenance/</code> — List (max 200); employees also see assigned jobs.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `status` | no | PENDING|APPROVED|REJECTED|TECHNICIAN_ASSIGNED|IN_PROGRESS|RESOLVED|ESCALATED |
-| `priority` | no | LOW|MEDIUM|HIGH|CRITICAL |
-| `assetId` | no |  |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "requests": [
-    {
-      "id": "uuid",
-      "issue": "Screen flicker",
-      "issueType": "HARDWARE",
-      "priority": "HIGH",
-      "status": "PENDING",
-      "asset": {
-        "id": "uuid",
-        "tag": "AF-0001",
-        "name": "Laptop"
-      },
-      "raisedBy": {
-        "id": "uuid",
-        "name": "Jane"
-      },
-      "technician": null,
-      "startedAt": "null",
-      "resolvedAt": "null",
-      "resolutionNotes": "null",
-      "cost": null,
-      "rejectedReason": "null",
-      "escalated": null,
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/maintenance/:id</code> — Detail + commentCount.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "request": {
-    "id": "uuid",
-    "issue": "Screen flicker",
-    "issueType": "HARDWARE",
-    "priority": "HIGH",
-    "status": "PENDING",
-    "asset": {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop"
-    },
-    "raisedBy": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "technician": null,
-    "startedAt": "null",
-    "resolvedAt": "null",
-    "resolutionNotes": "null",
-    "cost": null,
-    "rejectedReason": "null",
-    "escalated": null,
-    "createdAt": "ISO",
-    "commentCount": 3
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/maintenance/</code> — Raise request (priority defaults MEDIUM).</summary>
-
-**Access:** Authenticated
-
-**Request body**
+**Request body:**
 
 ```json
 {
   "assetId": "uuid",
-  "issue": "Screen flicker",
+  "issue": "Screen flickering",
   "issueType": "HARDWARE",
   "priority": "HIGH"
 }
 ```
 
-**Response `201` — `data`:**
+`issue` required (min 3 chars); `priority` defaults to `MEDIUM`.
+
+**Response `201`:** `{ "request": <MaintenanceRequest> }` · **Errors:** `400`, `404` asset.
+
+### POST `/api/maintenance/:id/approve`
+
+No body. **Response `200`:** `{ "request": { "id": "uuid", "status": "APPROVED" } }` — asset goes `UNDER_MAINTENANCE`, requester is notified. **Errors:** `400` `"Request must be PENDING to approve"`, `404`.
+
+### POST `/api/maintenance/:id/reject`
+
+**Request body (optional):** `{ "reason": "Not reproducible" }`
+
+**Response `200`:** `{ "request": { "id": "uuid", "status": "REJECTED" } }` · **Errors:** `400` not PENDING, `404`.
+
+### POST `/api/maintenance/:id/assign`
+
+**Request body:** either an internal user or an external name:
+
+```json
+{ "technicianId": "uuid" }
+```
+```json
+{ "technicianName": "External AC Services" }
+```
+
+Request must be `APPROVED` (re-assign is allowed from `TECHNICIAN_ASSIGNED`).
+
+**Response `200`:**
 
 ```json
 {
-  "request": {
-    "id": "uuid",
-    "issue": "Screen flicker",
-    "issueType": "HARDWARE",
-    "priority": "HIGH",
-    "status": "PENDING",
-    "asset": {
-      "id": "uuid",
-      "tag": "AF-0001",
-      "name": "Laptop"
-    },
-    "raisedBy": {
-      "id": "uuid",
-      "name": "Jane"
-    },
-    "technician": null,
-    "startedAt": "null",
-    "resolvedAt": "null",
-    "resolutionNotes": "null",
-    "cost": null,
-    "rejectedReason": "null",
-    "escalated": null,
-    "createdAt": "ISO"
-  }
+  "success": true,
+  "message": "Technician assigned",
+  "data": { "request": { "id": "uuid", "status": "TECHNICIAN_ASSIGNED", "technician": { "id": "uuid", "name": "Rohan Verma" } } }
 }
 ```
 
-</details>
+**Errors:** `400` `"Request must be APPROVED before assigning a technician"` / `"technicianId or technicianName is required"`, `404` request / technician user.
 
-<details><summary><code>POST /api/maintenance/:id/approve</code> — PENDING → APPROVED; asset UNDER_MAINTENANCE.</summary>
+### POST `/api/maintenance/:id/start`
 
-**Access:** Admin / Asset Manager
+No body. Only the assigned technician (or Admin/AM). **Response `200`:** `{ "request": { "id": "uuid", "status": "IN_PROGRESS" } }` · **Errors:** `400` `"Request must be in ASSIGNED status"`, `403` `"Only the assigned technician can start work"`.
 
-**Request body**
+### POST `/api/maintenance/:id/resolve`
 
-```json
-{}
-```
+**Request body (optional):** `{ "notes": "Replaced display cable", "cost": 1500 }`
 
-**Response `200` — `data`:**
+Allowed from `IN_PROGRESS`, `TECHNICIAN_ASSIGNED`, or `ESCALATED`. The asset returns to `AVAILABLE` (or `ALLOCATED` if it still has an active holder); the requester is notified.
 
-```json
-{
-  "request": {
-    "id": "uuid",
-    "status": "APPROVED"
-  }
-}
-```
+**Response `200`:** `{ "request": { "id": "uuid", "status": "RESOLVED" } }` · **Errors:** `400` `"Request is not in progress"`, `403`.
 
-</details>
+### POST `/api/maintenance/:id/escalate`
 
-<details><summary><code>POST /api/maintenance/:id/reject</code> — Reject PENDING with reason.</summary>
+**Request body (optional):** `{ "reason": "Vendor SLA breach", "escalateTo": "ADMIN" }`
 
-**Access:** Admin / Asset Manager
+**Response `200`:** `{ "request": { "id": "uuid", "status": "ESCALATED", "priority": "CRITICAL" } }` · **Errors:** `400` `"Cannot escalate a closed request"`.
 
-**Request body**
+### GET `/api/maintenance/:id/comments`
+
+**Response `200`:**
 
 ```json
 {
-  "reason": "\u2026"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "request": {
-    "id": "uuid",
-    "status": "REJECTED"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/maintenance/:id/assign</code> — Assign technician (id or name).</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{
-  "technicianId": "uuid|null",
-  "technicianName": "Vendor Co."
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "request": {
-    "id": "uuid",
-    "status": "TECHNICIAN_ASSIGNED",
-    "technician": {
-      "id": "uuid|null",
-      "name": "\u2026"
-    }
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/maintenance/:id/start</code> — ASSIGNED → IN_PROGRESS.</summary>
-
-**Access:** Assigned technician / Manager
-
-**Request body**
-
-```json
-{}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "request": {
-    "id": "uuid",
-    "status": "IN_PROGRESS"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/maintenance/:id/resolve</code> — Resolve; asset back to AVAILABLE/ALLOCATED.</summary>
-
-**Access:** Technician / Manager
-
-**Request body**
-
-```json
-{
-  "notes": "Replaced panel",
-  "cost": 220.5
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "request": {
-    "id": "uuid",
-    "status": "RESOLVED"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/maintenance/:id/escalate</code> — Escalate; priority → CRITICAL.</summary>
-
-**Access:** Admin / Asset Manager
-
-**Request body**
-
-```json
-{
-  "reason": "SLA breach",
-  "escalateTo": "ADMIN"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "request": {
-    "id": "uuid",
-    "status": "ESCALATED",
-    "priority": "CRITICAL"
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/maintenance/:id/comments</code> — Comment thread.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "comments": [
-    {
-      "id": "uuid",
-      "author": {
-        "id": "uuid",
-        "name": "Jane",
-        "role": "EMPLOYEE"
-      },
-      "text": "\u2026",
-      "createdAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/maintenance/:id/comments</code> — Add comment.</summary>
-
-**Access:** Authenticated
-
-**Request body**
-
-```json
-{
-  "text": "Vendor scheduled Monday."
-}
-```
-
-**Response `201` — `data`:**
-
-```json
-{
-  "comment": {
-    "id": "uuid",
-    "text": "\u2026",
-    "createdAt": "ISO"
-  }
-}
-```
-
-</details>
-
-### 17.12 Audit Cycles (`/api/audit-cycles`)
-
-Create/auditors/close: **Admin**. Mark items: assigned auditor or Admin. Reads scoped for Dept Heads.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated (scoped) |
-| `POST` | `/` | Admin |
-| `GET` | `/:id` | Authenticated |
-| `POST` | `/:id/auditors` | Admin |
-| `GET` | `/:id/items` | Authenticated |
-| `PATCH` | `/:id/items/bulk-update` | Assigned auditor / Admin |
-| `PATCH` | `/:id/items/:itemId` | Assigned auditor / Admin |
-| `GET` | `/:id/progress` | Authenticated |
-| `GET` | `/:id/discrepancy-report` | Authenticated |
-| `GET` | `/:id/summary` | Authenticated |
-| `POST` | `/:id/close` | Admin |
-
-<details><summary><code>GET /api/audit-cycles/</code> — List cycles.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `status` | no | ACTIVE|CLOSED |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "cycles": [
-    {
-      "id": "uuid",
-      "name": "Q3 2026 Audit",
-      "scopeType": "DEPARTMENT",
-      "startDate": "2026-07-15",
-      "endDate": "2026-07-30",
-      "status": "ACTIVE",
-      "createdAt": "ISO",
-      "closedAt": "null",
-      "stats": {
-        "total": 120,
-        "verified": 80,
-        "discrepancy": 3,
-        "missing": 1,
-        "pending": 36,
-        "completionPercent": 70
-      }
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/audit-cycles/</code> — Create + snapshot checklist from assets in scope.</summary>
-
-**Access:** Admin
-
-**Request body**
-
-```json
-{
-  "name": "Q3 2026 Audit",
-  "departmentIds": [
-    "uuid"
-  ],
-  "startDate": "2026-07-15",
-  "endDate": "2026-07-30"
-}
-```
-
-**Response `201` — `data`:**
-
-```json
-{
-  "cycle": {
-    "id": "uuid",
-    "name": "Q3 2026 Audit",
-    "scopeType": "DEPARTMENT",
-    "startDate": "2026-07-15",
-    "endDate": "2026-07-30",
-    "status": "ACTIVE",
-    "createdAt": "ISO",
-    "closedAt": "null",
-    "stats": {
-      "total": 120,
-      "verified": 80,
-      "discrepancy": 3,
-      "missing": 1,
-      "pending": 36,
-      "completionPercent": 70
-    }
-  }
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/audit-cycles/:id</code> — Detail + auditors + departments.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "cycle": {
-    "id": "uuid",
-    "name": "Q3 2026 Audit",
-    "scopeType": "DEPARTMENT",
-    "startDate": "2026-07-15",
-    "endDate": "2026-07-30",
-    "status": "ACTIVE",
-    "createdAt": "ISO",
-    "closedAt": "null",
-    "stats": {
-      "total": 120,
-      "verified": 80,
-      "discrepancy": 3,
-      "missing": 1,
-      "pending": 36,
-      "completionPercent": 70
-    },
-    "auditors": [
+  "success": true,
+  "message": "Comments fetched",
+  "data": {
+    "comments": [
       {
         "id": "uuid",
-        "name": "Jane",
-        "email": "\u2026"
-      }
-    ],
-    "departments": [
-      {
-        "id": "uuid",
-        "name": "Engineering"
+        "author": { "id": "uuid", "name": "Rohan Verma", "role": "ASSET_MANAGER" },
+        "text": "Parts ordered, ETA Friday.",
+        "createdAt": "2026-07-11T09:00:00.000Z"
       }
     ]
   }
 }
 ```
 
-</details>
+### POST `/api/maintenance/:id/comments`
 
-<details><summary><code>POST /api/audit-cycles/:id/auditors</code> — Assign auditors (idempotent).</summary>
+**Request body:** `{ "text": "Parts ordered, ETA Friday." }` (required)
 
-**Access:** Admin
+**Response `201`:** `{ "comment": { "id": "uuid", "text": "…", "createdAt": "…" } }`
 
-**Request body**
+---
+
+## 15. Audit Cycles API
+
+Base: `/api/audit-cycles` — auth required.
+
+Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCREPANCY | MISSING`. Items may only be marked by an **Admin** or an **assigned auditor**.
+
+| #  | Method | Endpoint                       | Role                    | Description                                  |
+|----|--------|--------------------------------|-------------------------|----------------------------------------------|
+| 1  | GET    | `/`                            | Any (DH scoped¹)        | List cycles with stats                       |
+| 2  | POST   | `/`                            | ADMIN                   | Create cycle; checklist snapshot from assets |
+| 3  | GET    | `/:id`                         | Any                     | Detail + auditors + departments              |
+| 4  | POST   | `/:id/auditors`                | ADMIN                   | Assign auditors                              |
+| 5  | GET    | `/:id/items`                   | Any                     | Checklist (filters: `status`, `q`)           |
+| 6  | PATCH  | `/:id/items/bulk-update`       | Admin / assigned auditor| Mark many items at once                      |
+| 7  | PATCH  | `/:id/items/:itemId`           | Admin / assigned auditor| Mark a single item                           |
+| 8  | GET    | `/:id/progress`                | Any                     | Totals + per-auditor breakdown               |
+| 9  | GET    | `/:id/discrepancy-report`      | Any                     | Flagged (DISCREPANCY / MISSING) items        |
+| 10 | GET    | `/:id/summary`                 | Any                     | Historical summary                           |
+| 11 | POST   | `/:id/close`                   | ADMIN                   | Lock cycle; MISSING items mark assets LOST   |
+
+¹ Dept Heads see org-wide (`ALL`) cycles plus cycles covering their department.
+
+### Cycle object
 
 ```json
 {
-  "userIds": [
-    "uuid",
-    "uuid"
-  ]
+  "id": "uuid",
+  "name": "Q3 2026 Audit",
+  "scopeType": "DEPARTMENT",
+  "startDate": "2026-07-01",
+  "endDate": "2026-07-31",
+  "status": "ACTIVE",
+  "createdAt": "2026-07-01T10:00:00.000Z",
+  "closedAt": null,
+  "stats": {
+    "total": 120,
+    "verified": 80,
+    "discrepancy": 3,
+    "missing": 2,
+    "pending": 35,
+    "completionPercent": 71
+  }
 }
 ```
 
-**Response `200` — `data`:**
+### GET `/api/audit-cycles`
+
+**Query filter:** `status` (`ACTIVE`|`CLOSED`).
+
+**Response `200`:** `{ "cycles": [ <Cycle>, ... ] }`
+
+### POST `/api/audit-cycles`
+
+**Request body:**
 
 ```json
 {
-  "addedCount": 2
+  "name": "Q3 2026 Audit",
+  "departmentIds": ["uuid"],
+  "startDate": "2026-07-01",
+  "endDate": "2026-07-31"
 }
 ```
 
-</details>
+`name` required (min 3 chars). If `departmentIds` is empty/omitted, scope is `ALL`. Checklist items are snapshotted from all non-`DISPOSED` assets in scope.
 
-<details><summary><code>GET /api/audit-cycles/:id/items</code> — Checklist + counts.</summary>
+**Response `201`:** `{ "cycle": <Cycle> }`
 
-**Access:** Authenticated
+### GET `/api/audit-cycles/:id`
 
-**Query params**
+**Response `200`:** `{ "cycle": <Cycle & { auditors: [{id,name,email}], departments: [{id,name}] }> }` · **Errors:** `404`.
 
-| Param | Required | Notes |
-|---|---|---|
-| `status` | no | PENDING|VERIFIED|DISCREPANCY|MISSING |
-| `q` | no | search |
+### POST `/api/audit-cycles/:id/auditors`
 
-**Response `200` — `data`:**
+**Request body:** `{ "userIds": ["uuid", "uuid"] }` (required, non-empty). Duplicate assignments are ignored; new auditors are notified.
+
+**Response `200`:** `{ "addedCount": 2 }` with message `"2 auditor(s) assigned"`.
+
+### GET `/api/audit-cycles/:id/items`
+
+**Query filters:** `status` (verification value), `q` (search tag / name / serial).
+
+**Response `200`:**
 
 ```json
 {
-  "items": [
-    {
-      "id": "uuid",
-      "asset": {
+  "success": true,
+  "message": "Audit items fetched",
+  "data": {
+    "items": [
+      {
         "id": "uuid",
-        "tag": "AF-0001",
-        "name": "Laptop",
-        "serial": "SN-1",
-        "status": "AVAILABLE"
-      },
-      "expectedLocation": "HQ",
-      "verification": "VERIFIED",
-      "notes": "null",
-      "photo": "null",
-      "verifiedBy": "Jane|null",
-      "verifiedAt": "ISO|null"
-    }
-  ],
-  "total": 120,
-  "verified": 80,
-  "discrepancy": 3,
-  "missing": 1,
-  "pending": 36
+        "asset": { "id": "uuid", "tag": "AF-0001", "name": "MacBook Pro 14", "serial": "C02…", "status": "ALLOCATED" },
+        "expectedLocation": "HQ / 2F / 204",
+        "verification": "PENDING",
+        "notes": null,
+        "photo": null,
+        "verifiedBy": null,
+        "verifiedAt": null
+      }
+    ],
+    "total": 120,
+    "verified": 80,
+    "discrepancy": 3,
+    "missing": 2,
+    "pending": 35
+  }
 }
 ```
 
-</details>
+### PATCH `/api/audit-cycles/:id/items/bulk-update`
 
-<details><summary><code>PATCH /api/audit-cycles/:id/items/bulk-update</code> — Mark many (VERIFIED|DISCREPANCY|MISSING).</summary>
-
-**Access:** Assigned auditor / Admin
-
-**Request body**
+**Request body:**
 
 ```json
 {
+  "itemIds": ["uuid", "uuid"],
   "verification": "VERIFIED",
-  "itemIds": [
-    "uuid"
-  ],
-  "notes": ""
+  "notes": "Physically verified on floor walk"
 }
 ```
 
-**Response `200` — `data`:**
+`verification` must be `VERIFIED`, `DISCREPANCY` or `MISSING` (not `PENDING`).
+
+**Response `200`:** `{ "updatedCount": 2 }` · **Errors:** `400`, `403` `"Only an assigned auditor can mark items"`.
+
+### PATCH `/api/audit-cycles/:id/items/:itemId`
+
+**Request body:**
 
 ```json
-{
-  "updatedCount": 5
-}
+{ "verification": "DISCREPANCY", "notes": "Found in room 305 instead", "photoUrl": "https://…" }
 ```
 
-</details>
+**Response `200`:** `{ "item": { "id": "uuid", "verification": "DISCREPANCY" } }` · **Errors:** `400` invalid value, `403`, `404`.
 
-<details><summary><code>PATCH /api/audit-cycles/:id/items/:itemId</code> — Mark one (optional photo).</summary>
+### GET `/api/audit-cycles/:id/progress`
 
-**Access:** Assigned auditor / Admin
-
-**Request body**
+**Response `200`:**
 
 ```json
 {
-  "verification": "DISCREPANCY",
-  "notes": "Wrong room",
-  "photoUrl": "null"
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "item": {
-    "id": "uuid",
-    "verification": "DISCREPANCY"
+  "success": true,
+  "message": "Progress fetched",
+  "data": {
+    "total": 120, "verified": 80, "discrepancy": 3, "missing": 2, "pending": 35, "completionPercent": 71,
+    "byAuditor": [ { "auditor": { "id": "uuid", "name": "Priya Shah" }, "completed": 45 } ]
   }
 }
 ```
 
-</details>
+### GET `/api/audit-cycles/:id/discrepancy-report`
 
-<details><summary><code>GET /api/audit-cycles/:id/progress</code> — Totals + per-auditor breakdown.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
+**Response `200`:**
 
 ```json
 {
-  "total": 120,
-  "verified": 80,
-  "discrepancy": 3,
-  "missing": 1,
-  "pending": 36,
-  "completionPercent": 70,
-  "byAuditor": [
-    {
-      "auditor": {
+  "success": true,
+  "message": "Discrepancy report fetched",
+  "data": {
+    "flaggedCount": 5,
+    "items": [
+      { "assetTag": "AF-0001", "assetName": "MacBook Pro 14", "verificationStatus": "MISSING", "notes": "…", "verifiedBy": "Priya Shah", "verifiedAt": "…" }
+    ]
+  }
+}
+```
+
+### GET `/api/audit-cycles/:id/summary`
+
+**Response `200`:** `{ "summary": <Cycle> }`
+
+### POST `/api/audit-cycles/:id/close`
+
+No body. Locks the cycle and marks every asset with a `MISSING` item as `LOST`.
+
+**Response `200`:** `{ "cycle": { "id": "uuid", "status": "CLOSED", "assetsMarkedLost": 2 } }` · **Errors:** `400` `"Cycle is already closed"`, `404`.
+
+---
+
+## 16. Dashboard API
+
+Base: `/api/dashboard` — auth required. All widgets are **scoped by role** (Employee → own, Dept Head → dept, Admin/AM → org).
+
+| # | Method | Endpoint              | Description                                    |
+|---|--------|-----------------------|------------------------------------------------|
+| 1 | GET    | `/kpis`               | Headline counters                              |
+| 2 | GET    | `/overdue`            | Overdue returns                                |
+| 3 | GET    | `/activity-feed`      | Recent activity (`?limit=`, default 10, max 50)|
+| 4 | GET    | `/utilization-chart`  | % assets allocated per day (`?days=`, 7–90)    |
+| 5 | GET    | `/upcoming-returns`   | Next expected returns (`?limit=`, default 5)   |
+| 6 | GET    | `/health-score`       | Fleet health score (org-wide)                  |
+
+### GET `/api/dashboard/kpis`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "KPIs fetched",
+  "data": {
+    "assetsAvailable": 42,
+    "assetsAllocated": 60,
+    "underMaintenance": 4,
+    "maintenanceOpen": 6,
+    "activeBookings": 9,
+    "pendingTransfers": 2,
+    "upcomingReturns": 5
+  }
+}
+```
+
+### GET `/api/dashboard/overdue`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Overdue items fetched",
+  "data": {
+    "overdueReturns": [
+      { "assetTag": "AF-0001", "assetName": "MacBook Pro 14", "holder": "Jane Doe", "expectedReturnDate": "2026-07-01", "daysOverdue": 11 }
+    ],
+    "overdueBookings": []
+  }
+}
+```
+
+### GET `/api/dashboard/activity-feed?limit=10`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Activity feed fetched",
+  "data": {
+    "activities": [
+      {
         "id": "uuid",
-        "name": "Jane"
+        "type": "ALLOCATION",
+        "description": "Allocated AF-0001 (MacBook Pro 14) to Jane Doe",
+        "actor": { "id": "uuid", "name": "Asset Manager" },
+        "entityType": "ALLOCATION",
+        "entityId": "uuid",
+        "createdAt": "2026-07-12T09:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+### GET `/api/dashboard/utilization-chart?days=30`
+
+**Response `200`:** `{ "dataPoints": [ { "date": "2026-07-01", "utilization": 48 }, ... ] }` — one point per day, utilization is a percentage.
+
+### GET `/api/dashboard/upcoming-returns?limit=5`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Upcoming returns fetched",
+  "data": {
+    "returns": [
+      {
+        "allocationId": "uuid",
+        "asset": { "tag": "AF-0001", "name": "MacBook Pro 14" },
+        "holder": { "id": "uuid", "name": "Jane Doe" },
+        "expectedReturnDate": "2026-07-15",
+        "status": "ON_TIME"
       },
-      "completed": 40
-    }
-  ]
+      {
+        "allocationId": "uuid",
+        "asset": { "tag": "AF-0002", "name": "Dell Monitor" },
+        "holder": { "id": "uuid", "name": "Arjun Nair" },
+        "expectedReturnDate": "2026-07-01",
+        "status": "OVERDUE",
+        "daysOverdue": 11
+      }
+    ]
+  }
 }
 ```
 
-</details>
+### GET `/api/dashboard/health-score`
 
-<details><summary><code>GET /api/audit-cycles/:id/discrepancy-report</code> — Flagged items.</summary>
+Weighted score: 40% availability ratio + 25% maintenance backlog + 20% audit compliance + 15% on-time returns.
 
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
+**Response `200`:**
 
 ```json
 {
-  "flaggedCount": 4,
-  "items": [
-    {
-      "assetTag": "AF-0001",
-      "assetName": "Laptop",
-      "verificationStatus": "DISCREPANCY",
-      "notes": "\u2026",
-      "verifiedBy": "Jane",
-      "verifiedAt": "ISO"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/audit-cycles/:id/summary</code> — Historical summary.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "summary": {
-    "id": "uuid",
-    "name": "Q3 2026 Audit",
-    "scopeType": "DEPARTMENT",
-    "startDate": "2026-07-15",
-    "endDate": "2026-07-30",
-    "status": "ACTIVE",
-    "createdAt": "ISO",
-    "closedAt": "null",
-    "stats": {
-      "total": 120,
-      "verified": 80,
-      "discrepancy": 3,
-      "missing": 1,
-      "pending": 36,
-      "completionPercent": 70
+  "success": true,
+  "message": "Health score fetched",
+  "data": {
+    "score": 84,
+    "label": "Good standing",
+    "breakdown": {
+      "availableRatio": 0.85,
+      "maintenanceBacklog": 0.94,
+      "auditCompliance": 0.71,
+      "overdueRate": 0.03
     }
   }
 }
 ```
 
-</details>
+`label`: `Good standing` (≥80), `Needs attention` (≥60), `At risk` (<60).
 
-<details><summary><code>POST /api/audit-cycles/:id/close</code> — Lock cycle; MISSING items → assets LOST.</summary>
+---
 
-**Access:** Admin
+## 17. Reports API
 
-**Request body**
+Base: `/api/reports` — **ADMIN, ASSET_MANAGER, DEPT_HEAD** only (Dept Heads see their department's slice).
 
-```json
-{}
-```
+| # | Method | Endpoint                  | Description                                     |
+|---|--------|---------------------------|-------------------------------------------------|
+| 1 | GET    | `/utilization`            | Most-used + idle assets                         |
+| 2 | GET    | `/maintenance-frequency`  | Maintenance request count per category          |
+| 3 | GET    | `/due-for-maintenance`    | Assets with ≥2 repairs or older than 4 years    |
+| 4 | GET    | `/allocation-summary`     | Active allocations per department               |
+| 5 | GET    | `/booking-heatmap`        | Peak booking hours per resource                 |
+| 6 | GET    | `/export`                 | Any of the above as a **CSV download**          |
 
-**Response `200` — `data`:**
+### GET `/api/reports/utilization`
 
 ```json
 {
-  "cycle": {
-    "id": "uuid",
-    "status": "CLOSED",
-    "assetsMarkedLost": 1
+  "success": true,
+  "message": "utilization report fetched",
+  "data": {
+    "mostUsed": [ { "asset": "AF-0001 — MacBook Pro 14", "count": 8 } ],
+    "idle": [ { "asset": "AF-0031 — Projector", "idleDays": 92 } ]
   }
 }
 ```
 
-</details>
-
-### 17.13 Dashboard (`/api/dashboard`)
-
-All widgets **scoped**: Employee → own, Dept Head → dept, Admin/AM → org.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/kpis` | Authenticated (scoped) |
-| `GET` | `/overdue` | Authenticated (scoped) |
-| `GET` | `/activity-feed` | Authenticated (scoped) |
-| `GET` | `/utilization-chart` | Authenticated |
-| `GET` | `/upcoming-returns` | Authenticated (scoped) |
-| `GET` | `/health-score` | Authenticated |
-
-<details><summary><code>GET /api/dashboard/kpis</code> — Headline counters.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
+### GET `/api/reports/maintenance-frequency`
 
 ```json
-{
-  "assetsAvailable": 50,
-  "assetsAllocated": 40,
-  "underMaintenance": 5,
-  "maintenanceOpen": 8,
-  "activeBookings": 12,
-  "pendingTransfers": 3,
-  "upcomingReturns": 7
-}
+{ "data": { "byCategory": [ { "category": "Laptops", "count": 14 } ] } }
 ```
 
-</details>
-
-<details><summary><code>GET /api/dashboard/overdue</code> — Overdue returns.</summary>
-
-**Access:** Authenticated (scoped)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
+### GET `/api/reports/due-for-maintenance`
 
 ```json
-{
-  "overdueReturns": [
-    {
-      "assetTag": "AF-0001",
-      "assetName": "Laptop",
-      "holder": "Jane",
-      "expectedReturnDate": "ISO",
-      "daysOverdue": 3
-    }
-  ],
-  "overdueBookings": []
-}
+{ "data": { "dueOrNearingRetirement": [ { "asset": "AF-0007 — Printer", "note": "3 repairs on record" } ] } }
 ```
 
-</details>
+### GET `/api/reports/allocation-summary`
 
-<details><summary><code>GET /api/dashboard/activity-feed</code> — Recent timeline.</summary>
+```json
+{ "data": { "byDepartment": [ { "department": "Engineering", "allocatedCount": 24 } ] } }
+```
 
-**Access:** Authenticated (scoped)
+### GET `/api/reports/booking-heatmap`
 
-**Query params**
+```json
+{ "data": { "heatmap": [ { "resource": "Conference Room A", "peakHour": "10:00-11:00", "bookings": 15 } ] } }
+```
 
-| Param | Required | Notes |
-|---|---|---|
-| `limit` | no | default 10, max 50 |
+### GET `/api/reports/export?type=&format=csv`
 
-**Response `200` — `data`:**
+| Param    | Rules                                                                                     |
+|----------|-------------------------------------------------------------------------------------------|
+| `type`   | Required: `utilization` \| `maintenance-frequency` \| `due-for-maintenance` \| `allocation-summary` \| `booking-heatmap` |
+| `format` | Only `csv` is supported (default)                                                         |
+
+**Response `200`:** raw CSV with `Content-Type: text/csv` and `Content-Disposition: attachment` — **not** the JSON envelope.
+
+**Errors:** `400` unknown type / non-csv format.
+
+---
+
+## 18. Notifications API
+
+Base: `/api/notifications` — auth required. Everything is scoped to **the logged-in user only**.
+
+| # | Method | Endpoint          | Description                                       |
+|---|--------|-------------------|---------------------------------------------------|
+| 1 | GET    | `/`               | Own feed (`?unread=true` to filter), max 100      |
+| 2 | GET    | `/preferences`    | Own notification preferences (with defaults)      |
+| 3 | PATCH  | `/preferences`    | Upsert own preferences (merge)                    |
+| 4 | POST   | `/mark-all-read`  | Mark all as read                                  |
+| 5 | PATCH  | `/:id/read`       | Mark one as read                                  |
+| 6 | DELETE | `/:id`            | Dismiss one                                       |
+
+### GET `/api/notifications`
+
+**Response `200`:**
 
 ```json
 {
-  "activities": [
-    {
-      "id": "uuid",
-      "type": "ALLOCATION",
-      "description": "\u2026",
-      "actor": {
+  "success": true,
+  "message": "Notifications fetched",
+  "data": {
+    "notifications": [
+      {
         "id": "uuid",
-        "name": "Jane"
-      },
-      "entityType": "ASSET",
-      "entityId": "uuid",
-      "createdAt": "ISO"
-    }
-  ]
+        "type": "ALLOCATION",
+        "title": "Asset allocated to you",
+        "message": "AF-0001 — MacBook Pro 14 has been allocated to you.",
+        "entity_type": "ALLOCATION",
+        "entity_id": "uuid",
+        "read": false,
+        "created_at": "2026-07-12T09:00:00.000Z"
+      }
+    ],
+    "unreadCount": 3
+  }
 }
 ```
 
-</details>
+### GET `/api/notifications/preferences`
 
-<details><summary><code>GET /api/dashboard/utilization-chart</code> — % allocated per day.</summary>
-
-**Access:** Authenticated
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `days` | no | 7–90, default 30 |
-
-**Response `200` — `data`:**
+**Response `200`:**
 
 ```json
 {
-  "dataPoints": [
-    {
-      "date": "2026-07-01",
-      "utilization": 62
-    }
-  ]
+  "success": true,
+  "message": "Preferences fetched",
+  "data": {
+    "preferences": { "allocation": true, "transfer": true, "maintenance": true, "booking": true, "audit": true, "email": false }
+  }
 }
 ```
 
-</details>
+### PATCH `/api/notifications/preferences`
 
-<details><summary><code>GET /api/dashboard/upcoming-returns</code> — Next returns due.</summary>
+**Request body:** any subset, merged into existing prefs — e.g. `{ "email": true, "booking": false }`
 
-**Access:** Authenticated (scoped)
+**Response `200`:** `{ "preferences": { ...merged } }`
 
-**Query params**
+### POST `/api/notifications/mark-all-read`
 
-| Param | Required | Notes |
-|---|---|---|
-| `limit` | no | default 5, max 20 |
+**Response `200`:** `{ "updatedCount": 3 }`
 
-**Response `200` — `data`:**
+### PATCH `/api/notifications/:id/read`
+
+**Response `200`:** `"Notification marked as read"` · **Errors:** `404` (not found or not yours).
+
+### DELETE `/api/notifications/:id`
+
+**Response `200`:** `"Notification dismissed"` · **Errors:** `404`.
+
+---
+
+## 19. Activity Logs API
+
+Base: `/api/activity-logs` — **ADMIN only.** Full audit trail of every mutating action.
+
+| # | Method | Endpoint   | Description                              |
+|---|--------|------------|------------------------------------------|
+| 1 | GET    | `/`        | Paginated, filterable log                |
+| 2 | GET    | `/export`  | CSV download (same filters, max 5000)    |
+
+Action types: `ALLOCATION`, `RETURN`, `TRANSFER`, `BOOKING`, `MAINTENANCE`, `AUDIT`, `ASSET`, `USER_CHANGE`, `SYSTEM`.
+
+### GET `/api/activity-logs`
+
+**Query parameters:**
+
+| Param        | Type   | Description                              |
+|--------------|--------|------------------------------------------|
+| `page`       | number | Default `1`                              |
+| `limit`      | number | Default `25`, max `100`                  |
+| `actionType` | string | One of the action types above            |
+| `userId`     | uuid   | Filter by actor                          |
+| `entityType` | string | e.g. `ASSET`, `ALLOCATION`               |
+| `from`       | date   | `YYYY-MM-DD` (inclusive)                 |
+| `to`         | date   | `YYYY-MM-DD` (inclusive)                 |
+
+**Response `200`:**
 
 ```json
 {
-  "returns": [
-    {
-      "allocationId": "uuid",
-      "asset": {
-        "tag": "AF-0001",
-        "name": "Laptop"
-      },
-      "holder": {
+  "success": true,
+  "message": "Activity logs fetched",
+  "data": {
+    "logs": [
+      {
         "id": "uuid",
-        "name": "Jane"
-      },
-      "expectedReturnDate": "ISO",
-      "status": "ON_TIME"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/dashboard/health-score</code> — Composite fleet health.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "score": 82,
-  "label": "Good standing",
-  "breakdown": {
-    "availableRatio": 0.9,
-    "maintenanceBacklog": 0.95,
-    "auditCompliance": 0.7,
-    "overdueRate": 0.05
+        "actionType": "ASSET",
+        "entityType": "ASSET",
+        "entityId": "uuid",
+        "description": "Registered asset AF-0042 — MacBook Pro 14",
+        "metadata": null,
+        "actor": { "id": "uuid", "name": "Asset Manager", "email": "manager@assetflow.com" },
+        "createdAt": "2026-07-12T09:00:00.000Z"
+      }
+    ],
+    "total": 512,
+    "page": 1,
+    "limit": 25
   }
 }
 ```
 
-</details>
-
-### 17.14 Reports (`/api/reports`)
-
-**Admin / Asset Manager / Dept Head** (dept heads scoped to their dept).
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/utilization` | Admin / AM / Dept Head |
-| `GET` | `/maintenance-frequency` | Admin / AM / Dept Head |
-| `GET` | `/due-for-maintenance` | Admin / AM / Dept Head |
-| `GET` | `/allocation-summary` | Admin / AM / Dept Head |
-| `GET` | `/booking-heatmap` | Admin / AM / Dept Head |
-| `GET` | `/export` | Admin / AM / Dept Head |
-
-<details><summary><code>GET /api/reports/utilization</code> — Most-used + idle assets.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "mostUsed": [
-    {
-      "asset": "AF-0001 \u2014 Laptop",
-      "count": 12
-    }
-  ],
-  "idle": [
-    {
-      "asset": "AF-0009 \u2014 Chair",
-      "idleDays": 45
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/reports/maintenance-frequency</code> — Counts by category.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "byCategory": [
-    {
-      "category": "Electronics",
-      "count": 18
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/reports/due-for-maintenance</code> — ≥2 repairs or >4 yrs old.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "dueOrNearingRetirement": [
-    {
-      "asset": "AF-0001 \u2014 Laptop",
-      "note": "3 repairs on record"
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/reports/allocation-summary</code> — Active allocations by dept.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "byDepartment": [
-    {
-      "department": "Engineering",
-      "allocatedCount": 24
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/reports/booking-heatmap</code> — Peak hours per resource.</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "heatmap": [
-    {
-      "resource": "Room B2",
-      "peakHour": "09:00-10:00",
-      "bookings": 14
-    }
-  ]
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/reports/export</code> — CSV download (envelope does not apply).</summary>
-
-**Access:** Admin / AM / Dept Head
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `type` | yes | utilization|maintenance-frequency|due-for-maintenance|allocation-summary|booking-heatmap |
-| `format` | yes | csv |
-
-**Response `200` — `data`:**
-
-`text/csv` attachment (raw CSV, not the JSON envelope).
-
-</details>
-
-### 17.15 Notifications (`/api/notifications`)
-
-All scoped to the logged-in user.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Authenticated |
-| `GET` | `/preferences` | Authenticated |
-| `PATCH` | `/preferences` | Authenticated |
-| `POST` | `/mark-all-read` | Authenticated |
-| `PATCH` | `/:id/read` | Authenticated (owner) |
-| `DELETE` | `/:id` | Authenticated (owner) |
-
-<details><summary><code>GET /api/notifications/</code> — Own feed (max 100) + unread count.</summary>
-
-**Access:** Authenticated
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `unread` | no | true = unread only |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "notifications": [
-    {
-      "id": "uuid",
-      "type": "ALLOCATION",
-      "title": "\u2026",
-      "message": "\u2026",
-      "entity_type": "ALLOCATION",
-      "entity_id": "uuid",
-      "read": false,
-      "created_at": "ISO"
-    }
-  ],
-  "unreadCount": 4
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/notifications/preferences</code> — Merged over defaults.</summary>
-
-**Access:** Authenticated
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "preferences": {
-    "allocation": true,
-    "transfer": true,
-    "maintenance": true,
-    "booking": true,
-    "audit": true,
-    "email": false
-  }
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/notifications/preferences</code> — Upsert (partial merge).</summary>
-
-**Access:** Authenticated
-
-**Request body**
-
-```json
-{
-  "allocation": true,
-  "transfer": true,
-  "maintenance": true,
-  "booking": true,
-  "audit": true,
-  "email": false
-}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "preferences": {
-    "allocation": true,
-    "transfer": true,
-    "maintenance": true,
-    "booking": true,
-    "audit": true,
-    "email": false
-  }
-}
-```
-
-</details>
-
-<details><summary><code>POST /api/notifications/mark-all-read</code> — Mark all read.</summary>
-
-**Access:** Authenticated
-
-**Request body**
-
-```json
-{}
-```
-
-**Response `200` — `data`:**
-
-```json
-{
-  "updatedCount": 4
-}
-```
-
-</details>
-
-<details><summary><code>PATCH /api/notifications/:id/read</code> — Mark one read.</summary>
-
-**Access:** Authenticated (owner)
-
-**Request body**
-
-```json
-{}
-```
-
-**Response `200` — `data`:**
-
-_No `data` payload (envelope `message` only)._
-
-</details>
-
-<details><summary><code>DELETE /api/notifications/:id</code> — Dismiss.</summary>
-
-**Access:** Authenticated (owner)
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-_No `data` payload (envelope `message` only)._
-
-</details>
-
-### 17.16 Activity Logs (`/api/activity-logs`)
-
-**Admin only** — full audit trail.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/` | Admin |
-| `GET` | `/export` | Admin |
-
-<details><summary><code>GET /api/activity-logs/</code> — Paginated, filterable.</summary>
-
-**Access:** Admin
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `page` | no | default 1 |
-| `limit` | no | default 25, max 100 |
-| `actionType` | no | ALLOCATION|RETURN|TRANSFER|BOOKING|MAINTENANCE|AUDIT|ASSET|USER_CHANGE|SYSTEM |
-| `userId` | no |  |
-| `entityType` | no |  |
-| `from` | no | YYYY-MM-DD |
-| `to` | no | YYYY-MM-DD |
-
-**Response `200` — `data`:**
-
-```json
-{
-  "logs": [
-    {
-      "id": "uuid",
-      "actionType": "ALLOCATION",
-      "entityType": "ASSET",
-      "entityId": "uuid",
-      "description": "\u2026",
-      "metadata": {},
-      "actor": {
-        "id": "uuid",
-        "name": "Jane",
-        "email": "\u2026"
-      },
-      "createdAt": "ISO"
-    }
-  ],
-  "total": 500,
-  "page": 1,
-  "limit": 25
-}
-```
-
-</details>
-
-<details><summary><code>GET /api/activity-logs/export</code> — CSV (max 5000 rows).</summary>
-
-**Access:** Admin
-
-**Query params**
-
-| Param | Required | Notes |
-|---|---|---|
-| `format` | yes | csv |
-| `from` | no | YYYY-MM-DD |
-| `to` | no | YYYY-MM-DD |
-| `actionType` | no |  |
-
-**Response `200` — `data`:**
-
-`text/csv` attachment.
-
-</details>
-
-### 17.17 Health (`/health`)
-
-Liveness/readiness. **No auth, no `/api` prefix.** Uses `{success,message,data,timestamp}`.
-
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/health` | Public |
-
-<details><summary><code>GET /health/health</code> — DB ping + uptime (200 healthy / 503 degraded).</summary>
-
-**Access:** Public
-
-**Request:** no body.
-
-**Response `200` — `data`:**
-
-```json
-{
-  "status": "ok",
-  "environment": "development",
-  "uptime_seconds": 3600,
-  "database": {
-    "status": "connected",
-    "latency_ms": 12.34
-  }
-}
-```
-
-</details>
-
+### GET `/api/activity-logs/export?format=csv`
+
+Accepts the same filters. **Response `200`:** raw CSV (`timestamp,actor,action_type,entity_type,description`) as an attachment — not the JSON envelope.
+
+---
+
+## 20. Error Reference
+
+All errors use the envelope `{ "success": false, "message": "<reason>", "data": null }`.
+
+| Status | When                                                                                  |
+|--------|---------------------------------------------------------------------------------------|
+| `400`  | Validation failure, invalid state transition, nothing to update                       |
+| `401`  | Missing / invalid / expired token; refresh-token reuse; invalid credentials           |
+| `403`  | Insufficient role; record outside your department; self-modification blocked          |
+| `404`  | Resource not found (also returned for malformed UUIDs); unknown route (`"Route not found"`) |
+| `409`  | Uniqueness conflicts (email, tag, department/category name), pending transfer exists, booking slot conflict |
+| `413`  | Uploaded file exceeds 10 MB                                                           |
+| `429`  | OTP rate limits (60 s resend cooldown; 5 verify attempts)                             |
+| `503`  | Cloudinary not configured; database unreachable (`/health`)                           |
+| `500`  | Unhandled server error (`"Internal server error"`)                                    |
+
+---
+
+## 21. Database Schema
+
+PostgreSQL (Neon) with `pgcrypto` for UUID generation. Full DDL: [`sql/schema.sql`](sql/schema.sql).
+
+### Enums
+
+| Enum          | Values                                            |
+|---------------|---------------------------------------------------|
+| `user_role`   | `ADMIN`, `ASSET_MANAGER`, `DEPT_HEAD`, `EMPLOYEE` |
+| `user_status` | `ACTIVE`, `INACTIVE`                              |
+
+### Tables
+
+#### `users`
+
+| Column          | Type          | Notes                                        |
+|-----------------|---------------|----------------------------------------------|
+| `id`            | UUID PK       | `gen_random_uuid()`                          |
+| `name`          | TEXT          | NOT NULL                                     |
+| `email`         | TEXT          | UNIQUE, NOT NULL                             |
+| `password_hash` | TEXT          | bcrypt (cost 10), NOT NULL                   |
+| `role`          | `user_role`   | Default `EMPLOYEE`                           |
+| `department_id` | UUID FK       | → `departments(id)`, ON DELETE SET NULL      |
+| `status`        | `user_status` | Default `ACTIVE`                             |
+| `designation`   | TEXT          | Nullable                                     |
+| `created_at` / `updated_at` | TIMESTAMPTZ | Default `now()`                  |
+
+#### `departments`
+
+| Column       | Type    | Notes                                        |
+|--------------|---------|----------------------------------------------|
+| `id`         | UUID PK |                                              |
+| `name`       | TEXT    | UNIQUE, NOT NULL                             |
+| `head_id`    | UUID FK | → `users(id)`, ON DELETE SET NULL            |
+| `parent_id`  | UUID FK | → `departments(id)` (hierarchy)              |
+| `status`     | TEXT    | Default `'ACTIVE'`                           |
+| `created_at` | TIMESTAMPTZ |                                          |
+
+#### `refresh_tokens`
+
+| Column        | Type    | Notes                                            |
+|---------------|---------|--------------------------------------------------|
+| `id`          | UUID PK |                                                  |
+| `user_id`     | UUID FK | → `users(id)`, ON DELETE CASCADE                 |
+| `token_hash`  | TEXT    | UNIQUE — SHA-256 of the opaque token             |
+| `expires_at`  | TIMESTAMPTZ | NOT NULL                                     |
+| `revoked_at`  | TIMESTAMPTZ | Set on logout / rotation / revocation        |
+| `replaced_by` | UUID FK | → `refresh_tokens(id)` — rotation chain          |
+| `created_at`  | TIMESTAMPTZ |                                              |
+
+#### `password_reset_otps`
+
+| Column       | Type    | Notes                                     |
+|--------------|---------|-------------------------------------------|
+| `id`         | UUID PK |                                           |
+| `user_id`    | UUID FK | → `users(id)`, ON DELETE CASCADE          |
+| `code_hash`  | TEXT    | bcrypt hash of the 6-digit code           |
+| `expires_at` | TIMESTAMPTZ | 10-minute TTL                         |
+| `consumed`   | BOOLEAN | Default FALSE                             |
+| `attempts`   | INT     | Default 0 (max 5)                         |
+| `created_at` | TIMESTAMPTZ |                                       |
+
+#### `categories`
+
+| Column          | Type    | Notes                                     |
+|-----------------|---------|-------------------------------------------|
+| `id`            | UUID PK |                                           |
+| `name`          | TEXT    | UNIQUE, NOT NULL                          |
+| `custom_fields` | JSONB   | Array of field definitions, default `[]`  |
+| `status`        | TEXT    | Default `'ACTIVE'`                        |
+| `parent_id`     | UUID FK | → `categories(id)`, ON DELETE SET NULL    |
+| `icon`          | TEXT    | Nullable                                  |
+| `created_at`    | TIMESTAMPTZ |                                       |
+
+#### `locations` / `floors` / `rooms`
+
+| Table       | Columns                                                              |
+|-------------|----------------------------------------------------------------------|
+| `locations` | `id` UUID PK, `building` TEXT NOT NULL, `city` TEXT, `created_at`    |
+| `floors`    | `id` UUID PK, `location_id` UUID FK → locations (CASCADE), `name`    |
+| `rooms`     | `id` UUID PK, `floor_id` UUID FK → floors (CASCADE), `name`          |
+
+#### `assets`
+
+| Column          | Type    | Notes                                                        |
+|-----------------|---------|--------------------------------------------------------------|
+| `id`            | UUID PK |                                                              |
+| `tag`           | TEXT    | UNIQUE, NOT NULL (auto `AF-0001`, `AF-0002`, …)              |
+| `name`          | TEXT    | NOT NULL                                                     |
+| `serial_no`     | TEXT    | Nullable                                                     |
+| `category_id`   | UUID FK | → `categories(id)`, SET NULL                                 |
+| `department_id` | UUID FK | → `departments(id)`, SET NULL                                |
+| `status`        | TEXT    | `AVAILABLE` (default) \| `ALLOCATED` \| `UNDER_MAINTENANCE` \| `RETIRED` \| `DISPOSED` \| `LOST` |
+| `condition`     | TEXT    | Default `'GOOD'`                                             |
+| `location`      | TEXT    | Free-text location label                                     |
+| `room_id`       | UUID FK | → `rooms(id)`, SET NULL                                      |
+| `is_bookable`   | BOOLEAN | Default FALSE — makes the asset a bookable resource          |
+| `purchase_date` | DATE    | Nullable                                                     |
+| `purchase_cost` | NUMERIC | Nullable                                                     |
+| `custom_values` | JSONB   | Values for the category's custom fields, default `{}`        |
+| `retirement`    | JSONB   | `{ reason, retirementDate, by }` when retired                |
+| `disposal`      | JSONB   | `{ method, notes, disposalDate, by }` when disposed          |
+| `created_by`    | UUID FK | → `users(id)`, SET NULL                                      |
+| `created_at` / `updated_at` | TIMESTAMPTZ |                                          |
+
+#### `asset_documents`
+
+| Column        | Type    | Notes                                  |
+|---------------|---------|----------------------------------------|
+| `id`          | UUID PK |                                        |
+| `asset_id`    | UUID FK | → `assets(id)`, CASCADE                |
+| `url`         | TEXT    | Cloudinary secure URL                  |
+| `filename`    | TEXT    | Original filename                      |
+| `mime`        | TEXT    | `image/png` \| `image/jpeg` \| `application/pdf` |
+| `bytes`       | INTEGER | File size                              |
+| `uploaded_by` | UUID FK | → `users(id)`, SET NULL                |
+| `created_at`  | TIMESTAMPTZ |                                    |
+
+#### `allocations`
+
+| Column                 | Type    | Notes                                                       |
+|------------------------|---------|-------------------------------------------------------------|
+| `id`                   | UUID PK |                                                             |
+| `asset_id`             | UUID FK | → `assets(id)`, CASCADE                                     |
+| `holder_id`            | UUID FK | → `users(id)`, CASCADE                                      |
+| `allocated_by`         | UUID FK | → `users(id)`, SET NULL                                     |
+| `purpose`              | TEXT    | Nullable                                                    |
+| `status`               | TEXT    | `PENDING` \| `ACTIVE` (default) \| `RETURN_REQUESTED` \| `RETURNED` \| `REJECTED` |
+| `expected_return_date` | DATE    | Nullable — drives overdue logic                             |
+| `allocated_at`         | TIMESTAMPTZ | Default `now()`                                         |
+| `return_requested_at`  | TIMESTAMPTZ | Nullable                                                |
+| `condition_on_return`  | TEXT    | Nullable                                                    |
+| `return_notes`         | TEXT    | Nullable                                                    |
+| `returned_at`          | TIMESTAMPTZ | Nullable                                                |
+| `approved_by`          | UUID FK | → `users(id)`, SET NULL                                     |
+| `created_at`           | TIMESTAMPTZ |                                                         |
+
+#### `transfer_requests`
+
+| Column            | Type    | Notes                                             |
+|-------------------|---------|---------------------------------------------------|
+| `id`              | UUID PK |                                                   |
+| `asset_id`        | UUID FK | → `assets(id)`, CASCADE                           |
+| `from_user`       | UUID FK | → `users(id)`, SET NULL (current holder)          |
+| `to_user`         | UUID FK | → `users(id)`, CASCADE                            |
+| `reason`          | TEXT    | Nullable                                          |
+| `status`          | TEXT    | `REQUESTED` (default) \| `APPROVED` \| `REJECTED` |
+| `decided_by`      | UUID FK | → `users(id)`, SET NULL                           |
+| `decision_reason` | TEXT    | Nullable                                          |
+| `created_at` / `decided_at` | TIMESTAMPTZ |                                       |
+
+#### `bookings` & `booking_series`
+
+| Table            | Columns                                                                                                   |
+|------------------|-----------------------------------------------------------------------------------------------------------|
+| `bookings`       | `id` PK, `resource_id` FK → assets (CASCADE), `booked_by` FK → users (CASCADE), `series_id` FK → booking_series (SET NULL), `start_ts` / `end_ts` TIMESTAMPTZ NOT NULL, `purpose` TEXT, `attendees` JSONB `[]`, `status` TEXT default `'CONFIRMED'` (\| `CANCELLED`), `created_at` |
+| `booking_series` | `id` PK, `resource_id` FK → assets (CASCADE), `frequency` TEXT (`DAILY`\|`WEEKLY`), `start_date` / `end_date` DATE, `created_by` FK → users (SET NULL), `created_at` |
+
+#### `maintenance_requests`
+
+| Column             | Type    | Notes                                                            |
+|--------------------|---------|------------------------------------------------------------------|
+| `id`               | UUID PK |                                                                  |
+| `asset_id`         | UUID FK | → `assets(id)`, CASCADE                                          |
+| `raised_by`        | UUID FK | → `users(id)`, SET NULL                                          |
+| `issue`            | TEXT    | NOT NULL                                                         |
+| `issue_type`       | TEXT    | Nullable                                                         |
+| `priority`         | TEXT    | `LOW` \| `MEDIUM` (default) \| `HIGH` \| `CRITICAL`              |
+| `status`           | TEXT    | `PENDING` (default) \| `APPROVED` \| `REJECTED` \| `TECHNICIAN_ASSIGNED` \| `IN_PROGRESS` \| `RESOLVED` \| `ESCALATED` |
+| `technician_id`    | UUID FK | → `users(id)`, SET NULL                                          |
+| `technician_name`  | TEXT    | For external technicians                                         |
+| `started_at` / `resolved_at` | TIMESTAMPTZ | Nullable                                         |
+| `resolution_notes` | TEXT    | Nullable                                                         |
+| `cost`             | NUMERIC | Nullable                                                         |
+| `rejected_reason`  | TEXT    | Nullable                                                         |
+| `escalated`        | JSONB   | `{ reason, escalateTo, by }`                                     |
+| `created_at` / `updated_at` | TIMESTAMPTZ |                                              |
+
+#### `maintenance_comments`
+
+| Column       | Type    | Notes                                       |
+|--------------|---------|---------------------------------------------|
+| `id`         | UUID PK |                                             |
+| `request_id` | UUID FK | → `maintenance_requests(id)`, CASCADE       |
+| `author_id`  | UUID FK | → `users(id)`, SET NULL                     |
+| `text`       | TEXT    | NOT NULL                                    |
+| `created_at` | TIMESTAMPTZ |                                         |
+
+#### `audit_cycles`, `audit_cycle_departments`, `audit_cycle_auditors`, `audit_items`
+
+| Table                     | Columns                                                                                          |
+|---------------------------|--------------------------------------------------------------------------------------------------|
+| `audit_cycles`            | `id` PK, `name` NOT NULL, `scope_type` TEXT default `'ALL'` (\| `DEPARTMENT`), `start_date` / `end_date` DATE, `status` TEXT `'ACTIVE'`\|`'CLOSED'`, `created_by` FK → users, `closed_at`, `created_at` |
+| `audit_cycle_departments` | `(cycle_id, department_id)` composite PK — both FK CASCADE                                        |
+| `audit_cycle_auditors`    | `(cycle_id, user_id)` composite PK — both FK CASCADE                                              |
+| `audit_items`             | `id` PK, `cycle_id` FK (CASCADE), `asset_id` FK (CASCADE), `expected_location` TEXT, `verification` TEXT default `'PENDING'` (\| `VERIFIED`\|`DISCREPANCY`\|`MISSING`), `notes`, `photo_url`, `verified_by` FK → users (SET NULL), `verified_at`; **UNIQUE (cycle_id, asset_id)** |
+
+#### `notifications`
+
+| Column        | Type    | Notes                                        |
+|---------------|---------|----------------------------------------------|
+| `id`          | UUID PK |                                              |
+| `user_id`     | UUID FK | → `users(id)`, CASCADE                       |
+| `type`        | TEXT    | `ALLOCATION`, `RETURN`, `TRANSFER`, `BOOKING`, `MAINTENANCE`, `AUDIT`, … |
+| `title`       | TEXT    | NOT NULL                                     |
+| `message`     | TEXT    | Nullable                                     |
+| `entity_type` | TEXT    | Nullable                                     |
+| `entity_id`   | UUID    | Nullable                                     |
+| `read`        | BOOLEAN | Default FALSE                                |
+| `created_at`  | TIMESTAMPTZ |                                          |
+
+#### `notification_preferences`
+
+| Column       | Type    | Notes                                    |
+|--------------|---------|------------------------------------------|
+| `user_id`    | UUID PK | → `users(id)`, CASCADE                   |
+| `prefs`      | JSONB   | Merged over defaults, default `{}`       |
+| `updated_at` | TIMESTAMPTZ |                                      |
+
+#### `activity_logs`
+
+| Column        | Type    | Notes                                     |
+|---------------|---------|-------------------------------------------|
+| `id`          | UUID PK |                                           |
+| `actor_id`    | UUID FK | → `users(id)`, SET NULL                   |
+| `action_type` | TEXT    | See action types in §19                   |
+| `entity_type` | TEXT    | Nullable                                  |
+| `entity_id`   | UUID    | Nullable                                  |
+| `description` | TEXT    | NOT NULL                                  |
+| `metadata`    | JSONB   | Nullable                                  |
+| `created_at`  | TIMESTAMPTZ |                                       |
+
+### Indexes
+
+| Index                  | Table / Columns                                            | Purpose                            |
+|------------------------|------------------------------------------------------------|------------------------------------|
+| `idx_users_email`      | `users(email)`                                             | Login lookup                       |
+| `idx_otp_user`         | `password_reset_otps(user_id, consumed)`                   | OTP verification                   |
+| `idx_rt_hash`          | `refresh_tokens(token_hash)`                               | Refresh lookup                     |
+| `idx_rt_user_active`   | `refresh_tokens(user_id)` WHERE `revoked_at IS NULL`       | Bulk session revocation (partial)  |
+| `idx_assets_status`    | `assets(status)`                                           | Status filters / KPIs              |
+| `idx_assets_category`  | `assets(category_id)`                                      | Category filters                   |
+| `idx_assets_department`| `assets(department_id)`                                    | Department scoping                 |
+| `idx_alloc_asset`      | `allocations(asset_id, status)`                            | Current-holder lookups             |
+| `idx_alloc_holder`     | `allocations(holder_id, status)`                           | "My assets" queries                |
+| `idx_transfers_status` | `transfer_requests(status)`                                | Pending-transfer lists             |
+| `idx_bookings_resource`| `bookings(resource_id, start_ts)`                          | Calendar / conflict checks         |
+| `idx_bookings_user`    | `bookings(booked_by, start_ts)`                            | "My bookings"                      |
+| `idx_maint_status`     | `maintenance_requests(status)`                             | Open-request lists                 |
+| `idx_maint_asset`      | `maintenance_requests(asset_id)`                           | Asset history                      |
+| `idx_audit_items_cycle`| `audit_items(cycle_id, verification)`                      | Checklist filters / stats          |
+| `idx_notif_user`       | `notifications(user_id, read, created_at DESC)`            | Feed + unread count                |
+| `idx_activity_created` | `activity_logs(created_at DESC)`                           | Log timeline                       |
+| `idx_activity_actor`   | `activity_logs(actor_id, created_at DESC)`                 | Per-user activity                  |
+
+---
+
+## 22. Seeded Test Accounts
+
+`npm run seed` provisions demo data including these logins:
+
+| Role            | Email                    | Password       | Department       |
+|-----------------|--------------------------|----------------|------------------|
+| ADMIN           | `admin@assetflow.com`    | `Admin@123`    | —                |
+| ASSET_MANAGER   | `manager@assetflow.com`  | `Manager@123`  | —                |
+| DEPT_HEAD       | `head@assetflow.com`     | `Head@123`     | Engineering      |
+| DEPT_HEAD       | `aditi@assetflow.com`    | `Aditi@123`    | Sales            |
+| ASSET_MANAGER   | `rohan@assetflow.com`    | `Rohan@123`    | Operations       |
+| EMPLOYEE        | `employee@assetflow.com` | `Employee@123` | Engineering      |
+| EMPLOYEE        | `priya@assetflow.com`    | `Priya@123`    | Engineering      |
+| EMPLOYEE        | `arjun@assetflow.com`    | `Arjun@123`    | Sales            |
+| EMPLOYEE        | `sneha@assetflow.com`    | `Sneha@123`    | Marketing        |
+| EMPLOYEE (INACTIVE) | `vikram@assetflow.com` | `Vikram@123` | Human Resources  |
+
+---
+
+*Generated from the source in `Backend/src` (Express 5 + TypeScript + Neon PostgreSQL). Postman collection: [`postman/AssetFlow.postman_collection.json`](postman/AssetFlow.postman_collection.json).*
