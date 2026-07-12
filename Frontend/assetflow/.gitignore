@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Spec/design documents
+../ASSETFLOW_SPEC_Frontend.md
+../ASSETFLOW_SPEC_Backend.md
+ASSETFLOW_SPEC.md
