@@ -144,7 +144,15 @@ export function Topbar() {
                       {notification.message}
                     </p>
                     <p className="text-[10px] text-muted-foreground/60 mt-1">
-                      {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+                      {(() => {
+                        try {
+                          const d = new Date(notification.createdAt);
+                          if (isNaN(d.getTime())) return "";
+                          return formatDistanceToNow(d, { addSuffix: true });
+                        } catch {
+                          return "";
+                        }
+                      })()}
                     </p>
                   </div>
                 </DropdownMenuItem>
