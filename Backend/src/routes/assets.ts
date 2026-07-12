@@ -413,6 +413,22 @@ assetsRouter.post('/:id/mark-lost', requireRole('ADMIN', 'ASSET_MANAGER'), async
   try {
     const { id } = req.params;
     if (!isUuid(id)) return fail(res, 404, 'Asset not found');
+    const current = await query<{ status: string; tag: string }>(
+      'SELECT status, tag FROM assets WHERE id = $1',
+      [id],
+    );
+
+    if (!current.rowCount) return fail(res, 404, 'Asset not found');
+
+    if (current.rows[0].status === 'LOST') {
+      return ok(res, 200, 'Asset is already marked as lost', {
+        asset: {
+          id,
+          tag: current.rows[0].tag,
+          status: 'LOST',
+        },
+      });
+    }
     const row = await transition(req, id, 'LOST', {});
     if (!row) return fail(res, 404, 'Asset not found');
     logActivity(req.user!.userId, 'ASSET', 'ASSET', id, `Marked asset ${row.tag} as lost`);
