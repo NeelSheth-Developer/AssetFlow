@@ -61,7 +61,7 @@ Every endpoint (except CSV exports and `/health`) returns the same JSON envelope
 
 Error responses use the same shape with `success: false` and `data: null`.
 
-**Request body limit:** JSON bodies are capped at **20 KB** (`express.json({ limit: '20kb' })`). File uploads use `multipart/form-data` (see [Assets — documents](#post-apiassetsiddocuments)).
+**Request body limit:** JSON bodies are capped at **20 KB** (`express.json({ limit: '20kb' })`). File uploads use `multipart/form-data` (see [10.7 Assets — documents](#107-post-apiassetsiddocuments)).
 
 ---
 
@@ -107,6 +107,19 @@ Authorization: Bearer <access-token-jwt>
 
 > The middleware checks the `at` cookie **first**, then falls back to the `Authorization: Bearer` header. Note that the login/signup responses set the token in cookies only — to use bearer mode, capture the `at` cookie value from the `Set-Cookie` response header.
 
+**Quick start — demo Admin login (curl):**
+
+```bash
+# Log in with the seeded demo Admin account (see §22) and store the cookies
+curl -X POST https://assetflow-production-85d2.up.railway.app/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "admin@assetflow.com", "password": "Admin@123" }' \
+  -c cookies.txt
+
+# Call any protected endpoint with the saved cookies
+curl https://assetflow-production-85d2.up.railway.app/api/auth/me -b cookies.txt
+```
+
 ### 2.4 Token lifecycle
 
 - **`POST /api/auth/refresh`** rotates the refresh token: the old one is revoked and chained to its replacement, and a fresh access token is minted. Role / department are re-read from the DB, so promotions apply without re-login.
@@ -147,7 +160,7 @@ Authorization: Bearer <access-token-jwt>
 
 ## 4. Health
 
-### GET `/health`
+### 4.1 GET `/health`
 
 Public — no auth. Verifies the database connection. *(Does not use the standard envelope's `data: null` convention; includes a `timestamp`.)*
 
@@ -186,7 +199,7 @@ Base: `/api/auth`
 | 7 | POST   | `/reset-password`   | Public            | OTP + new password (atomic)                  |
 | 8 | POST   | `/change-password`  | Required          | Change password while logged in              |
 
-### POST `/api/auth/signup`
+### 5.1 POST `/api/auth/signup`
 
 **Request body:**
 
@@ -227,9 +240,9 @@ A `role` field in the body is **ignored** — the account is always created as `
 
 **Errors:** `400` (validation), `409` `"Email already registered"`.
 
-### POST `/api/auth/login`
+### 5.2 POST `/api/auth/login`
 
-**Request body:**
+**Request body** (example uses the seeded **demo Admin account** — full list of demo logins in [§22](#22-seeded-test-accounts)):
 
 ```json
 {
@@ -238,11 +251,28 @@ A `role` field in the body is **ignored** — the account is always created as `
 }
 ```
 
-**Response `200`** (sets `at` + `rt` cookies) — same `user` object as signup.
+**Response `200`** (sets `at` + `rt` cookies):
+
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "name": "System Admin",
+      "email": "admin@assetflow.com",
+      "role": "ADMIN",
+      "departmentId": null,
+      "status": "ACTIVE"
+    }
+  }
+}
+```
 
 **Errors:** `400` missing fields, `401` `"Invalid credentials"` (identical for unknown email and wrong password — anti-enumeration), `403` `"Account is inactive. Contact your administrator."`.
 
-### POST `/api/auth/refresh`
+### 5.3 POST `/api/auth/refresh`
 
 No body. Requires the `rt` cookie. Rotates the refresh token and sets fresh `at` + `rt` cookies.
 
@@ -260,7 +290,7 @@ No body. Requires the `rt` cookie. Rotates the refresh token and sets fresh `at`
 
 **Errors:** `401` `"Session expired. Please log in again."` (missing / unknown / expired token, and **token reuse** — which also revokes every session for the user), `403` `"Account is inactive."`.
 
-### POST `/api/auth/logout`
+### 5.4 POST `/api/auth/logout`
 
 No body. Revokes the presented refresh token (if any) and clears both cookies. **Always `200`:**
 
@@ -268,7 +298,7 @@ No body. Revokes the presented refresh token (if any) and clears both cookies. *
 { "success": true, "message": "Logged out", "data": null }
 ```
 
-### GET `/api/auth/me`
+### 5.5 GET `/api/auth/me`
 
 Auth required. Role and department are read fresh from the DB, not from the token.
 
@@ -292,7 +322,7 @@ Auth required. Role and department are read fresh from the DB, not from the toke
 }
 ```
 
-### POST `/api/auth/forgot-password`
+### 5.6 POST `/api/auth/forgot-password`
 
 **Request body:** `{ "email": "jane@gmail.com" }`
 
@@ -310,7 +340,7 @@ Sends a 6-digit OTP valid for **10 minutes**. Anti-enumeration: always returns t
 
 **Errors:** `429` `"Please wait 60 seconds before requesting another code."` (per-user rate limit).
 
-### POST `/api/auth/reset-password`
+### 5.7 POST `/api/auth/reset-password`
 
 OTP verification + password update in **one atomic request**. All existing sessions are revoked on success.
 
@@ -328,7 +358,7 @@ OTP verification + password update in **one atomic request**. All existing sessi
 
 **Errors:** `400` `"Invalid or expired code"` (each wrong OTP increments an attempts counter), `429` `"Too many attempts. Request a new code."` (after 5 failed attempts), `400` password-rule message.
 
-### POST `/api/auth/change-password`
+### 5.8 POST `/api/auth/change-password`
 
 Auth required.
 
@@ -361,7 +391,7 @@ Base: `/api/users` — auth required. **Everything is Admin-only except `PATCH /
 | 6 | PATCH  | `/:id/department`   | ADMIN     | Assign or unassign (`null`) a department       |
 | 7 | PATCH  | `/:id/status`       | ADMIN     | Activate / deactivate (revokes sessions)       |
 
-### PATCH `/api/users/me/profile`
+### 6.1 PATCH `/api/users/me/profile`
 
 **Request body** (at least one field):
 
@@ -379,7 +409,7 @@ Base: `/api/users` — auth required. **Everything is Admin-only except `PATCH /
 }
 ```
 
-### GET `/api/users`
+### 6.2 GET `/api/users`
 
 **Query parameters:**
 
@@ -417,7 +447,7 @@ Base: `/api/users` — auth required. **Everything is Admin-only except `PATCH /
 }
 ```
 
-### GET `/api/users/:id/assets`
+### 6.3 GET `/api/users/:id/assets`
 
 Assets the user currently holds (allocation status `ACTIVE` or `RETURN_REQUESTED`).
 
@@ -442,7 +472,7 @@ Assets the user currently holds (allocation status `ACTIVE` or `RETURN_REQUESTED
 }
 ```
 
-### GET `/api/users/:id/activity`
+### 6.4 GET `/api/users/:id/activity`
 
 **Query:** `limit` (default `5`, max `20`).
 
@@ -466,7 +496,7 @@ Assets the user currently holds (allocation status `ACTIVE` or `RETURN_REQUESTED
 }
 ```
 
-### PATCH `/api/users/:id/role`
+### 6.5 PATCH `/api/users/:id/role`
 
 **Request body:** `{ "role": "ASSET_MANAGER" }` — allowed values: `EMPLOYEE`, `ASSET_MANAGER`, `DEPT_HEAD`. **`ADMIN` is never accepted.**
 
@@ -484,7 +514,7 @@ Assets the user currently holds (allocation status `ACTIVE` or `RETURN_REQUESTED
 
 **Errors:** `400` `"Invalid role"`, `400` `"Assign a department before promoting to Department Head"`, `403` `"You cannot change your own role"`, `404` user not found. If the user already has the role, returns `200` with `"User is already a <Role>"` and `data: null`.
 
-### PATCH `/api/users/:id/department`
+### 6.6 PATCH `/api/users/:id/department`
 
 **Request body:** `{ "departmentId": "uuid" }` — or `{ "departmentId": null }` to unassign.
 
@@ -506,7 +536,7 @@ Assets the user currently holds (allocation status `ACTIVE` or `RETURN_REQUESTED
 
 **Errors:** `400` `"Cannot unassign department from a Department Head"`, `404` user / department not found. Idempotent no-op returns `200` with an "already assigned" message.
 
-### PATCH `/api/users/:id/status`
+### 6.7 PATCH `/api/users/:id/status`
 
 **Request body:** `{ "status": "INACTIVE" }` — `ACTIVE` | `INACTIVE`.
 
@@ -554,15 +584,15 @@ Base: `/api/departments` — auth required. **Reads: any user. Writes: Admin onl
 }
 ```
 
-### GET `/api/departments`
+### 7.1 GET `/api/departments`
 
 **Response `200`:** `{ "departments": [ <Department>, ... ] }` — sorted by name.
 
-### GET `/api/departments/:id`
+### 7.2 GET `/api/departments/:id`
 
 **Response `200`:** `{ "department": <Department> }` · **Errors:** `404`.
 
-### GET `/api/departments/:id/employees`
+### 7.3 GET `/api/departments/:id/employees`
 
 **Response `200`:**
 
@@ -578,7 +608,7 @@ Base: `/api/departments` — auth required. **Reads: any user. Writes: Admin onl
 }
 ```
 
-### GET `/api/departments/:id/assets`
+### 7.4 GET `/api/departments/:id/assets`
 
 **Response `200`:**
 
@@ -594,7 +624,7 @@ Base: `/api/departments` — auth required. **Reads: any user. Writes: Admin onl
 }
 ```
 
-### POST `/api/departments`
+### 7.5 POST `/api/departments`
 
 **Request body:**
 
@@ -612,13 +642,13 @@ Base: `/api/departments` — auth required. **Reads: any user. Writes: Admin onl
 
 **Errors:** `400` name length, `404` head/parent not found, `409` `"Department name already exists"`.
 
-### PATCH `/api/departments/:id`
+### 7.6 PATCH `/api/departments/:id`
 
 **Request body** (any subset): `name`, `headId` (nullable), `parentId` (nullable, not itself), `status` (`ACTIVE`|`INACTIVE`).
 
 **Response `200`:** `{ "department": <Department> }` · **Errors:** `400` `"Nothing to update"` / `"A department cannot be its own parent"`, `404`, `409` duplicate name.
 
-### DELETE `/api/departments/:id`
+### 7.7 DELETE `/api/departments/:id`
 
 **Response `200`:** `"Department deleted"` (users' `department_id` becomes `NULL` via FK).
 
@@ -657,19 +687,19 @@ Base: `/api/categories` — auth required. **Reads: any user. Writes: Admin only
 }
 ```
 
-### GET `/api/categories`
+### 8.1 GET `/api/categories`
 
 **Response `200`:** `{ "categories": [ <Category>, ... ] }`
 
-### GET `/api/categories/tree`
+### 8.2 GET `/api/categories/tree`
 
 **Response `200`:** `{ "tree": [ <Category & { children: [...] }>, ... ] }` — roots at the top level, children nested recursively.
 
-### GET `/api/categories/:id`
+### 8.3 GET `/api/categories/:id`
 
 **Response `200`:** `{ "category": <Category> }` · **Errors:** `404`.
 
-### POST `/api/categories`
+### 8.4 POST `/api/categories`
 
 **Request body:**
 
@@ -684,17 +714,17 @@ Base: `/api/categories` — auth required. **Reads: any user. Writes: Admin only
 
 **Response `201`:** `{ "category": <Category> }` · **Errors:** `400` name 2–100 chars, `409` `"Category name already exists"`.
 
-### PATCH `/api/categories/:id`
+### 8.5 PATCH `/api/categories/:id`
 
 **Request body** (any subset): `name`, `customFields` (full array replace), `status` (`ACTIVE`|`INACTIVE`), `parentId` (nullable, not itself), `icon`.
 
 **Response `200`:** `{ "category": <Category> }` · **Errors:** `400`, `404`, `409` duplicate name.
 
-### DELETE `/api/categories/:id`
+### 8.6 DELETE `/api/categories/:id`
 
 **Response `200`:** `"Category deleted"` · **Errors:** `404`.
 
-### POST `/api/categories/:id/custom-fields`
+### 8.7 POST `/api/categories/:id/custom-fields`
 
 **Request body:**
 
@@ -718,7 +748,7 @@ Base: `/api/categories` — auth required. **Reads: any user. Writes: Admin only
 
 **Response `201`:** `{ "field": { "id": "uuid", "label": "…", "key": "…", "type": "…", "required": false } }`
 
-### DELETE `/api/categories/:id/custom-fields/:fieldId`
+### 8.8 DELETE `/api/categories/:id/custom-fields/:fieldId`
 
 **Response `200`:** `"Custom field removed"` · **Errors:** `404` category / field not found.
 
@@ -728,7 +758,7 @@ Base: `/api/categories` — auth required. **Reads: any user. Writes: Admin only
 
 Base: `/api/locations` — auth required.
 
-### GET `/api/locations`
+### 9.1 GET `/api/locations`
 
 Returns the full **building → floor → room** cascade.
 
@@ -807,7 +837,7 @@ Asset lifecycle: `AVAILABLE → ALLOCATED → AVAILABLE`, `AVAILABLE → RETIRED
 
 `status` ∈ `AVAILABLE | ALLOCATED | UNDER_MAINTENANCE | RETIRED | DISPOSED | LOST`.
 
-### GET `/api/assets`
+### 10.1 GET `/api/assets`
 
 **Query parameters:**
 
@@ -822,13 +852,13 @@ Asset lifecycle: `AVAILABLE → ALLOCATED → AVAILABLE`, `AVAILABLE → RETIRED
 
 **Response `200`:** `{ "assets": [ <Asset>, ... ], "total": 120, "page": 1, "limit": 20 }`
 
-### GET `/api/assets/search?q=`
+### 10.2 GET `/api/assets/search?q=`
 
 `q` required. Returns up to **20** matches (tag / serial / name, case-insensitive), scoped by role.
 
 **Response `200`:** `{ "assets": [ <Asset>, ... ] }` · **Errors:** `400` `"q is required"`.
 
-### POST `/api/assets`
+### 10.3 POST `/api/assets`
 
 **Request body:**
 
@@ -853,7 +883,7 @@ Only `name` (min 2 chars) is required. If `tag` is omitted it auto-generates as 
 
 **Response `201`:** `{ "asset": <Asset> }` · **Errors:** `400` `"Asset name is required"`, `409` `"Asset tag already exists"`.
 
-### GET `/api/assets/:id`
+### 10.4 GET `/api/assets/:id`
 
 **Response `200`:** `{ "asset": <Asset & { documents: [...] }> }` where each document is:
 
@@ -863,13 +893,13 @@ Only `name` (min 2 chars) is required. If `tag` is omitted it auto-generates as 
 
 **Errors:** `404` `"Asset not found"`, `403` `"This record is outside your department"` (exists but out of scope).
 
-### PATCH `/api/assets/:id`
+### 10.5 PATCH `/api/assets/:id`
 
 **Request body** (any subset): `name`, `serialNo`, `categoryId`, `departmentId`, `condition`, `location`, `roomId`, `isBookable`, `purchaseDate`, `purchaseCost`, `customValues`, `status`.
 
 **Response `200`:** `{ "asset": <Asset> }` · **Errors:** `400` `"Invalid status"` / `"Nothing to update"`, `404`.
 
-### GET `/api/assets/:id/history`
+### 10.6 GET `/api/assets/:id/history`
 
 **Response `200`:**
 
@@ -904,7 +934,7 @@ Only `name` (min 2 chars) is required. If `tag` is omitted it auto-generates as 
 }
 ```
 
-### POST `/api/assets/:id/documents`
+### 10.7 POST `/api/assets/:id/documents`
 
 **Request:** `multipart/form-data` with a single **`file`** field.
 
@@ -927,7 +957,7 @@ Only `name` (min 2 chars) is required. If `tag` is omitted it auto-generates as 
 
 **Errors:** `400` missing file / disallowed type (`"Only PNG, JPEG or PDF files are allowed"`), `413` file too large, `404` asset not found, `503` `"Cloudinary is not configured on the server"`.
 
-### GET `/api/assets/:id/qr`
+### 10.8 GET `/api/assets/:id/qr`
 
 **Response `200`:**
 
@@ -941,7 +971,7 @@ Only `name` (min 2 chars) is required. If `tag` is omitted it auto-generates as 
 
 The QR encodes `{"app":"assetflow","assetId":"<uuid>","tag":"AF-0001"}`.
 
-### POST `/api/assets/:id/retire`
+### 10.9 POST `/api/assets/:id/retire`
 
 Asset must currently be `AVAILABLE`.
 
@@ -951,7 +981,7 @@ Asset must currently be `AVAILABLE`.
 
 **Errors:** `400` `"Asset must be Available to retire"`, `404`.
 
-### POST `/api/assets/:id/dispose`
+### 10.10 POST `/api/assets/:id/dispose`
 
 Asset must currently be `RETIRED`.
 
@@ -961,13 +991,13 @@ Asset must currently be `RETIRED`.
 
 **Errors:** `400` `"Asset must be Retired before disposal"`, `404`.
 
-### POST `/api/assets/:id/mark-lost`
+### 10.11 POST `/api/assets/:id/mark-lost`
 
 No body. Idempotent — if already `LOST`, returns `200` with `"Asset is already marked as lost"`.
 
 **Response `200`:** `{ "asset": { "id": "uuid", "tag": "AF-0001", "status": "LOST" } }`
 
-### POST `/api/assets/bulk-delete`
+### 10.12 POST `/api/assets/bulk-delete`
 
 **Request body:** `{ "ids": ["uuid", "uuid"] }`
 
@@ -1016,13 +1046,13 @@ Allocation status: `PENDING → ACTIVE → RETURN_REQUESTED → RETURNED` (or `R
 }
 ```
 
-### GET `/api/allocations`
+### 11.1 GET `/api/allocations`
 
 **Query filters:** `assetId` (uuid), `employeeId` (uuid), `departmentId` (uuid), `status` (`PENDING`|`ACTIVE`|`RETURN_REQUESTED`|`RETURNED`|`REJECTED`).
 
 **Response `200`:** `{ "allocations": [ <Allocation>, ... ] }`
 
-### GET `/api/allocations/kanban`
+### 11.2 GET `/api/allocations/kanban`
 
 **Response `200`:**
 
@@ -1043,15 +1073,15 @@ Allocation status: `PENDING → ACTIVE → RETURN_REQUESTED → RETURNED` (or `R
 
 Overdue rows land in `OVERDUE` regardless of underlying status; each column carries at most 50 items.
 
-### GET `/api/allocations/overdue`
+### 11.3 GET `/api/allocations/overdue`
 
 **Response `200`:** `{ "overdue": [ <Allocation & { daysOverdue: 5 }>, ... ] }`
 
-### GET `/api/allocations/:id`
+### 11.4 GET `/api/allocations/:id`
 
 **Response `200`:** `{ "allocation": <Allocation> }` · **Errors:** `404`.
 
-### POST `/api/allocations`
+### 11.5 POST `/api/allocations`
 
 **Request body:**
 
@@ -1070,7 +1100,7 @@ Overdue rows land in `OVERDUE` regardless of underlying status; each column carr
 
 **Errors:** `400` `"Asset is <STATUS> — only Available assets can be allocated"` / `"User is inactive"`, `404` asset / user not found.
 
-### POST `/api/allocations/:id/approve`
+### 11.6 POST `/api/allocations/:id/approve`
 
 No body. Allocation must be `PENDING`. Sets it `ACTIVE`, marks the asset `ALLOCATED`, notifies the holder.
 
@@ -1078,7 +1108,7 @@ No body. Allocation must be `PENDING`. Sets it `ACTIVE`, marks the asset `ALLOCA
 
 **Errors:** `400` `"Only pending allocations can be approved"`, `403` out-of-department (Dept Head), `404`.
 
-### POST `/api/allocations/:id/return`
+### 11.7 POST `/api/allocations/:id/return`
 
 Only the **current holder** may call this; allocation must be `ACTIVE`.
 
@@ -1088,7 +1118,7 @@ Only the **current holder** may call this; allocation must be `ACTIVE`.
 
 **Errors:** `403` `"Only the current holder can initiate a return"`, `400` `"Only active allocations can be returned"`, `404`.
 
-### POST `/api/allocations/:id/return/approve`
+### 11.8 POST `/api/allocations/:id/return/approve`
 
 No body. Allocation must be `RETURN_REQUESTED`. Sets it `RETURNED`, the asset becomes `AVAILABLE`, holder is notified.
 
@@ -1131,17 +1161,17 @@ Transfer status: `REQUESTED → APPROVED | REJECTED`.
 }
 ```
 
-### GET `/api/transfers`
+### 12.1 GET `/api/transfers`
 
 **Query filter:** `status` (`REQUESTED`|`APPROVED`|`REJECTED`). Max 200 rows.
 
 **Response `200`:** `{ "transfers": [ <Transfer>, ... ] }`
 
-### GET `/api/transfers/:id`
+### 12.2 GET `/api/transfers/:id`
 
 **Response `200`:** `{ "transfer": <Transfer> }` · **Errors:** `403` (employee who is not a participant), `404`.
 
-### POST `/api/transfers`
+### 12.3 POST `/api/transfers`
 
 **Request body:**
 
@@ -1155,7 +1185,7 @@ Transfer status: `REQUESTED → APPROVED | REJECTED`.
 
 **Errors:** `400` `"Cannot transfer an asset to yourself"` / `"Only allocated assets can be transferred"` / `"Target user is inactive"`, `404` asset / target user, `409` `"A transfer request for this asset is already pending"`.
 
-### POST `/api/transfers/:id/approve`
+### 12.4 POST `/api/transfers/:id/approve`
 
 No body. Closes the old holder's allocation (`RETURNED`), opens a new `ACTIVE` allocation for the target, keeps the asset `ALLOCATED`, and notifies both parties.
 
@@ -1163,7 +1193,7 @@ No body. Closes the old holder's allocation (`RETURNED`), opens a new `ACTIVE` a
 
 **Errors:** `400` `"Transfer request is already decided"`, `403` out-of-department, `404`.
 
-### POST `/api/transfers/:id/reject`
+### 12.5 POST `/api/transfers/:id/reject`
 
 **Request body (optional):** `{ "reason": "Asset needed by current team" }`
 
@@ -1224,19 +1254,19 @@ Either of the following forms is accepted:
 
 `end` must be after `start`, otherwise `400` `"Provide start/end (ISO) or date + startTime + endTime"`.
 
-### GET `/api/resources`
+### 13.1 GET `/api/resources`
 
 Bookable assets not in `RETIRED`/`DISPOSED`/`LOST`.
 
 **Response `200`:** `{ "resources": [ { "id", "tag", "name", "location", "status" } ] }`
 
-### GET `/api/resources/:id/calendar?from=&to=`
+### 13.2 GET `/api/resources/:id/calendar?from=&to=`
 
 `from`/`to` optional ISO dates (defaults: now → +7 days).
 
 **Response `200`:** `{ "bookings": [ <Booking>, ... ] }`
 
-### GET `/api/resources/:id/availability?date=YYYY-MM-DD`
+### 13.3 GET `/api/resources/:id/availability?date=YYYY-MM-DD`
 
 `date` required. Returns a 09:00–18:00 hour grid.
 
@@ -1256,17 +1286,17 @@ Bookable assets not in `RETIRED`/`DISPOSED`/`LOST`.
 }
 ```
 
-### GET `/api/bookings`
+### 13.4 GET `/api/bookings`
 
 **Query filters:** `resourceId` (uuid), `date` (`YYYY-MM-DD`), `status` (`UPCOMING`|`ONGOING`|`COMPLETED`|`CANCELLED`). Max 200 rows.
 
 **Response `200`:** `{ "bookings": [ <Booking>, ... ] }`
 
-### GET `/api/bookings/my`
+### 13.5 GET `/api/bookings/my`
 
 **Response `200`:** `{ "bookings": [ <Booking>, ... ] }` (max 100).
 
-### POST `/api/bookings/check-availability`
+### 13.6 POST `/api/bookings/check-availability`
 
 **Request body:** `{ "resourceId": "uuid", ...timeRange }`
 
@@ -1286,7 +1316,7 @@ Bookable assets not in `RETIRED`/`DISPOSED`/`LOST`.
 }
 ```
 
-### POST `/api/bookings`
+### 13.7 POST `/api/bookings`
 
 **Request body:**
 
@@ -1305,7 +1335,7 @@ Bookable assets not in `RETIRED`/`DISPOSED`/`LOST`.
 
 **Errors:** `400` `"This asset is not bookable"` / invalid range, `404` resource, `409` `"Requested slot conflicts with an existing booking"`.
 
-### POST `/api/bookings/recurring`
+### 13.8 POST `/api/bookings/recurring`
 
 **Request body:**
 
@@ -1334,15 +1364,15 @@ Bookable assets not in `RETIRED`/`DISPOSED`/`LOST`.
 }
 ```
 
-### GET `/api/bookings/:id`
+### 13.9 GET `/api/bookings/:id`
 
 **Response `200`:** `{ "booking": <Booking> }` · **Errors:** `403`, `404`.
 
-### POST `/api/bookings/:id/cancel`
+### 13.10 POST `/api/bookings/:id/cancel`
 
 No body. **Response `200`:** `{ "booking": { "id": "uuid", "status": "CANCELLED" } }` · **Errors:** `400` `"Booking is already cancelled"`, `403`, `404`. The booker is notified if someone else cancels.
 
-### POST `/api/bookings/:id/reschedule`
+### 13.11 POST `/api/bookings/:id/reschedule`
 
 **Request body:** a time range (see above). Re-runs the overlap check excluding this booking.
 
@@ -1396,17 +1426,17 @@ Status flow: `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → R
 
 `priority` ∈ `LOW | MEDIUM | HIGH | CRITICAL`.
 
-### GET `/api/maintenance`
+### 14.1 GET `/api/maintenance`
 
 **Query filters:** `assetId` (uuid), `status` (any status above), `priority`.
 
 **Response `200`:** `{ "requests": [ <MaintenanceRequest>, ... ] }`
 
-### GET `/api/maintenance/:id`
+### 14.2 GET `/api/maintenance/:id`
 
 **Response `200`:** `{ "request": <MaintenanceRequest & { commentCount: 3 }> }` · **Errors:** `404`.
 
-### POST `/api/maintenance`
+### 14.3 POST `/api/maintenance`
 
 **Request body:**
 
@@ -1423,17 +1453,17 @@ Status flow: `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → R
 
 **Response `201`:** `{ "request": <MaintenanceRequest> }` · **Errors:** `400`, `404` asset.
 
-### POST `/api/maintenance/:id/approve`
+### 14.4 POST `/api/maintenance/:id/approve`
 
 No body. **Response `200`:** `{ "request": { "id": "uuid", "status": "APPROVED" } }` — asset goes `UNDER_MAINTENANCE`, requester is notified. **Errors:** `400` `"Request must be PENDING to approve"`, `404`.
 
-### POST `/api/maintenance/:id/reject`
+### 14.5 POST `/api/maintenance/:id/reject`
 
 **Request body (optional):** `{ "reason": "Not reproducible" }`
 
 **Response `200`:** `{ "request": { "id": "uuid", "status": "REJECTED" } }` · **Errors:** `400` not PENDING, `404`.
 
-### POST `/api/maintenance/:id/assign`
+### 14.6 POST `/api/maintenance/:id/assign`
 
 **Request body:** either an internal user or an external name:
 
@@ -1458,11 +1488,11 @@ Request must be `APPROVED` (re-assign is allowed from `TECHNICIAN_ASSIGNED`).
 
 **Errors:** `400` `"Request must be APPROVED before assigning a technician"` / `"technicianId or technicianName is required"`, `404` request / technician user.
 
-### POST `/api/maintenance/:id/start`
+### 14.7 POST `/api/maintenance/:id/start`
 
 No body. Only the assigned technician (or Admin/AM). **Response `200`:** `{ "request": { "id": "uuid", "status": "IN_PROGRESS" } }` · **Errors:** `400` `"Request must be in ASSIGNED status"`, `403` `"Only the assigned technician can start work"`.
 
-### POST `/api/maintenance/:id/resolve`
+### 14.8 POST `/api/maintenance/:id/resolve`
 
 **Request body (optional):** `{ "notes": "Replaced display cable", "cost": 1500 }`
 
@@ -1470,13 +1500,13 @@ Allowed from `IN_PROGRESS`, `TECHNICIAN_ASSIGNED`, or `ESCALATED`. The asset ret
 
 **Response `200`:** `{ "request": { "id": "uuid", "status": "RESOLVED" } }` · **Errors:** `400` `"Request is not in progress"`, `403`.
 
-### POST `/api/maintenance/:id/escalate`
+### 14.9 POST `/api/maintenance/:id/escalate`
 
 **Request body (optional):** `{ "reason": "Vendor SLA breach", "escalateTo": "ADMIN" }`
 
 **Response `200`:** `{ "request": { "id": "uuid", "status": "ESCALATED", "priority": "CRITICAL" } }` · **Errors:** `400` `"Cannot escalate a closed request"`.
 
-### GET `/api/maintenance/:id/comments`
+### 14.10 GET `/api/maintenance/:id/comments`
 
 **Response `200`:**
 
@@ -1497,7 +1527,7 @@ Allowed from `IN_PROGRESS`, `TECHNICIAN_ASSIGNED`, or `ESCALATED`. The asset ret
 }
 ```
 
-### POST `/api/maintenance/:id/comments`
+### 14.11 POST `/api/maintenance/:id/comments`
 
 **Request body:** `{ "text": "Parts ordered, ETA Friday." }` (required)
 
@@ -1550,13 +1580,13 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 }
 ```
 
-### GET `/api/audit-cycles`
+### 15.1 GET `/api/audit-cycles`
 
 **Query filter:** `status` (`ACTIVE`|`CLOSED`).
 
 **Response `200`:** `{ "cycles": [ <Cycle>, ... ] }`
 
-### POST `/api/audit-cycles`
+### 15.2 POST `/api/audit-cycles`
 
 **Request body:**
 
@@ -1573,17 +1603,17 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 
 **Response `201`:** `{ "cycle": <Cycle> }`
 
-### GET `/api/audit-cycles/:id`
+### 15.3 GET `/api/audit-cycles/:id`
 
 **Response `200`:** `{ "cycle": <Cycle & { auditors: [{id,name,email}], departments: [{id,name}] }> }` · **Errors:** `404`.
 
-### POST `/api/audit-cycles/:id/auditors`
+### 15.4 POST `/api/audit-cycles/:id/auditors`
 
 **Request body:** `{ "userIds": ["uuid", "uuid"] }` (required, non-empty). Duplicate assignments are ignored; new auditors are notified.
 
 **Response `200`:** `{ "addedCount": 2 }` with message `"2 auditor(s) assigned"`.
 
-### GET `/api/audit-cycles/:id/items`
+### 15.5 GET `/api/audit-cycles/:id/items`
 
 **Query filters:** `status` (verification value), `q` (search tag / name / serial).
 
@@ -1615,7 +1645,7 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 }
 ```
 
-### PATCH `/api/audit-cycles/:id/items/bulk-update`
+### 15.6 PATCH `/api/audit-cycles/:id/items/bulk-update`
 
 **Request body:**
 
@@ -1631,7 +1661,7 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 
 **Response `200`:** `{ "updatedCount": 2 }` · **Errors:** `400`, `403` `"Only an assigned auditor can mark items"`.
 
-### PATCH `/api/audit-cycles/:id/items/:itemId`
+### 15.7 PATCH `/api/audit-cycles/:id/items/:itemId`
 
 **Request body:**
 
@@ -1641,7 +1671,7 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 
 **Response `200`:** `{ "item": { "id": "uuid", "verification": "DISCREPANCY" } }` · **Errors:** `400` invalid value, `403`, `404`.
 
-### GET `/api/audit-cycles/:id/progress`
+### 15.8 GET `/api/audit-cycles/:id/progress`
 
 **Response `200`:**
 
@@ -1656,7 +1686,7 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 }
 ```
 
-### GET `/api/audit-cycles/:id/discrepancy-report`
+### 15.9 GET `/api/audit-cycles/:id/discrepancy-report`
 
 **Response `200`:**
 
@@ -1673,11 +1703,11 @@ Cycle status: `ACTIVE | CLOSED`. Item verification: `PENDING | VERIFIED | DISCRE
 }
 ```
 
-### GET `/api/audit-cycles/:id/summary`
+### 15.10 GET `/api/audit-cycles/:id/summary`
 
 **Response `200`:** `{ "summary": <Cycle> }`
 
-### POST `/api/audit-cycles/:id/close`
+### 15.11 POST `/api/audit-cycles/:id/close`
 
 No body. Locks the cycle and marks every asset with a `MISSING` item as `LOST`.
 
@@ -1698,7 +1728,7 @@ Base: `/api/dashboard` — auth required. All widgets are **scoped by role** (Em
 | 5 | GET    | `/upcoming-returns`   | Next expected returns (`?limit=`, default 5)   |
 | 6 | GET    | `/health-score`       | Fleet health score (org-wide)                  |
 
-### GET `/api/dashboard/kpis`
+### 16.1 GET `/api/dashboard/kpis`
 
 **Response `200`:**
 
@@ -1718,7 +1748,7 @@ Base: `/api/dashboard` — auth required. All widgets are **scoped by role** (Em
 }
 ```
 
-### GET `/api/dashboard/overdue`
+### 16.2 GET `/api/dashboard/overdue`
 
 **Response `200`:**
 
@@ -1735,7 +1765,7 @@ Base: `/api/dashboard` — auth required. All widgets are **scoped by role** (Em
 }
 ```
 
-### GET `/api/dashboard/activity-feed?limit=10`
+### 16.3 GET `/api/dashboard/activity-feed?limit=10`
 
 **Response `200`:**
 
@@ -1759,11 +1789,11 @@ Base: `/api/dashboard` — auth required. All widgets are **scoped by role** (Em
 }
 ```
 
-### GET `/api/dashboard/utilization-chart?days=30`
+### 16.4 GET `/api/dashboard/utilization-chart?days=30`
 
 **Response `200`:** `{ "dataPoints": [ { "date": "2026-07-01", "utilization": 48 }, ... ] }` — one point per day, utilization is a percentage.
 
-### GET `/api/dashboard/upcoming-returns?limit=5`
+### 16.5 GET `/api/dashboard/upcoming-returns?limit=5`
 
 **Response `200`:**
 
@@ -1793,7 +1823,7 @@ Base: `/api/dashboard` — auth required. All widgets are **scoped by role** (Em
 }
 ```
 
-### GET `/api/dashboard/health-score`
+### 16.6 GET `/api/dashboard/health-score`
 
 Weighted score: 40% availability ratio + 25% maintenance backlog + 20% audit compliance + 15% on-time returns.
 
@@ -1833,7 +1863,7 @@ Base: `/api/reports` — **ADMIN, ASSET_MANAGER, DEPT_HEAD** only (Dept Heads se
 | 5 | GET    | `/booking-heatmap`        | Peak booking hours per resource                 |
 | 6 | GET    | `/export`                 | Any of the above as a **CSV download**          |
 
-### GET `/api/reports/utilization`
+### 17.1 GET `/api/reports/utilization`
 
 ```json
 {
@@ -1846,31 +1876,31 @@ Base: `/api/reports` — **ADMIN, ASSET_MANAGER, DEPT_HEAD** only (Dept Heads se
 }
 ```
 
-### GET `/api/reports/maintenance-frequency`
+### 17.2 GET `/api/reports/maintenance-frequency`
 
 ```json
 { "data": { "byCategory": [ { "category": "Laptops", "count": 14 } ] } }
 ```
 
-### GET `/api/reports/due-for-maintenance`
+### 17.3 GET `/api/reports/due-for-maintenance`
 
 ```json
 { "data": { "dueOrNearingRetirement": [ { "asset": "AF-0007 — Printer", "note": "3 repairs on record" } ] } }
 ```
 
-### GET `/api/reports/allocation-summary`
+### 17.4 GET `/api/reports/allocation-summary`
 
 ```json
 { "data": { "byDepartment": [ { "department": "Engineering", "allocatedCount": 24 } ] } }
 ```
 
-### GET `/api/reports/booking-heatmap`
+### 17.5 GET `/api/reports/booking-heatmap`
 
 ```json
 { "data": { "heatmap": [ { "resource": "Conference Room A", "peakHour": "10:00-11:00", "bookings": 15 } ] } }
 ```
 
-### GET `/api/reports/export?type=&format=csv`
+### 17.6 GET `/api/reports/export?type=&format=csv`
 
 | Param    | Rules                                                                                     |
 |----------|-------------------------------------------------------------------------------------------|
@@ -1896,7 +1926,7 @@ Base: `/api/notifications` — auth required. Everything is scoped to **the logg
 | 5 | PATCH  | `/:id/read`       | Mark one as read                                  |
 | 6 | DELETE | `/:id`            | Dismiss one                                       |
 
-### GET `/api/notifications`
+### 18.1 GET `/api/notifications`
 
 **Response `200`:**
 
@@ -1922,7 +1952,7 @@ Base: `/api/notifications` — auth required. Everything is scoped to **the logg
 }
 ```
 
-### GET `/api/notifications/preferences`
+### 18.2 GET `/api/notifications/preferences`
 
 **Response `200`:**
 
@@ -1936,21 +1966,21 @@ Base: `/api/notifications` — auth required. Everything is scoped to **the logg
 }
 ```
 
-### PATCH `/api/notifications/preferences`
+### 18.3 PATCH `/api/notifications/preferences`
 
 **Request body:** any subset, merged into existing prefs — e.g. `{ "email": true, "booking": false }`
 
 **Response `200`:** `{ "preferences": { ...merged } }`
 
-### POST `/api/notifications/mark-all-read`
+### 18.4 POST `/api/notifications/mark-all-read`
 
 **Response `200`:** `{ "updatedCount": 3 }`
 
-### PATCH `/api/notifications/:id/read`
+### 18.5 PATCH `/api/notifications/:id/read`
 
 **Response `200`:** `"Notification marked as read"` · **Errors:** `404` (not found or not yours).
 
-### DELETE `/api/notifications/:id`
+### 18.6 DELETE `/api/notifications/:id`
 
 **Response `200`:** `"Notification dismissed"` · **Errors:** `404`.
 
@@ -1967,7 +1997,7 @@ Base: `/api/activity-logs` — **ADMIN only.** Full audit trail of every mutatin
 
 Action types: `ALLOCATION`, `RETURN`, `TRANSFER`, `BOOKING`, `MAINTENANCE`, `AUDIT`, `ASSET`, `USER_CHANGE`, `SYSTEM`.
 
-### GET `/api/activity-logs`
+### 19.1 GET `/api/activity-logs`
 
 **Query parameters:**
 
@@ -2007,7 +2037,7 @@ Action types: `ALLOCATION`, `RETURN`, `TRANSFER`, `BOOKING`, `MAINTENANCE`, `AUD
 }
 ```
 
-### GET `/api/activity-logs/export?format=csv`
+### 19.2 GET `/api/activity-logs/export?format=csv`
 
 Accepts the same filters. **Response `200`:** raw CSV (`timestamp,actor,action_type,entity_type,description`) as an attachment — not the JSON envelope.
 
