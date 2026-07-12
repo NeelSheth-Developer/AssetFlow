@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { departments, users } from "@/data/mock";
+import { useState, useEffect } from "react";
+import { departmentsApi, categoriesApi, usersApi } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { categories } from "@/data/mock";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   ChevronRight,
@@ -32,8 +48,9 @@ import {
   Archive,
   Table as TableIcon,
   Plus,
+  Loader2,
 } from "lucide-react";
-import type { Category } from "@/lib/types";
+import { toast } from "sonner";
 
 // ===== ICON MAP =====
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -70,13 +87,135 @@ function getInitials(name: string) {
     .slice(0, 2);
 }
 
-// ===== DEPARTMENTS TAB =====
-function DepartmentsTab() {
+// ===== LOADING SKELETON =====
+function LoadingSkeleton({ count = 3 }: { count?: number }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {departments.map((dept) => {
-        const head = users.find((u) => u.id === dept.headId);
-        return (
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="bg-card rounded-xl border p-5 animate-pulse">
+          <div className="h-5 w-32 bg-muted rounded mb-3" />
+          <div className="flex items-center gap-2 mb-4">
+            <div className="h-8 w-8 rounded-full bg-muted" />
+            <div className="space-y-1">
+              <div className="h-3 w-24 bg-muted rounded" />
+              <div className="h-2 w-16 bg-muted rounded" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="h-5 w-20 bg-muted rounded" />
+            <div className="h-5 w-16 bg-muted rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TableSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="space-y-3 animate-pulse">
+      <div className="h-9 w-64 bg-muted rounded" />
+      <div className="space-y-2">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="h-12 w-full bg-muted rounded" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TreeSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="space-y-2 animate-pulse">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-2 py-2 px-3">
+          <div className="h-4 w-4 bg-muted rounded" />
+          <div className="h-4 w-4 bg-muted rounded" />
+          <div className="h-4 w-28 bg-muted rounded" />
+          <div className="h-5 w-8 bg-muted rounded ml-auto" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ===== DEPARTMENTS TAB =====
+function DepartmentsTab() {
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [deptName, setDeptName] = useState("");
+  const [deptHead, setDeptHead] = useState("");
+  const [deptParent, setDeptParent] = useState("");
+  const [users, setUsers] = useState<any[]>([]);
+
+  useEffect(() => {
+    departmentsApi.list()
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setDepartments(res.data.departments || res.data || []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (dialogOpen) {
+      usersApi.list({ limit: 100 })
+        .then((res: any) => {
+          if (res.success && res.data) {
+            setUsers(res.data.users || []);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [dialogOpen]);
+
+  function resetForm() {
+    setDeptName("");
+    setDeptHead("");
+    setDeptParent("");
+  }
+
+  function handleCreateDepartment() {
+    if (!deptName.trim()) {
+      toast.error("Department name is required");
+      return;
+    }
+
+    setSubmitting(true);
+    departmentsApi.create({
+      name: deptName.trim(),
+      headId: deptHead || undefined,
+      parentId: deptParent || undefined,
+    })
+      .then((res: any) => {
+        if (res.success) {
+          toast.success(res.message || "Department created successfully");
+          setDialogOpen(false);
+          resetForm();
+          // Refresh
+          departmentsApi.list().then((r: any) => {
+            if (r.success && r.data) {
+              setDepartments(r.data.departments || r.data || []);
+            }
+          });
+        } else {
+          toast.error(res.message || "Failed to create department");
+        }
+      })
+      .catch((err: Error) => toast.error(err.message || "Failed to create department"))
+      .finally(() => setSubmitting(false));
+  }
+
+  if (loading) return <LoadingSkeleton count={6} />;
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {departments.map((dept: any) => (
           <div
             key={dept.id}
             className="bg-card rounded-xl border p-5 hover:shadow-md transition"
@@ -91,39 +230,105 @@ function DepartmentsTab() {
               />
             </div>
 
-            {head && (
+            {dept.head ? (
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium">
-                  {getInitials(head.name)}
+                  {getInitials(dept.head.name)}
                 </div>
                 <div>
-                  <p className="text-sm font-medium leading-none">{head.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {head.designation}
-                  </p>
+                  <p className="text-sm font-medium leading-none">{dept.head.name}</p>
+                  <p className="text-xs text-muted-foreground">Department Head</p>
                 </div>
               </div>
-            )}
-            {!head && (
+            ) : (
               <p className="text-sm text-muted-foreground mb-4">No head assigned</p>
             )}
 
             <div className="flex items-center gap-2">
-              <Badge variant="secondary">{dept.employeeCount} employees</Badge>
-              <Badge variant="secondary">{dept.assetCount} assets</Badge>
+              <Badge variant="secondary">{dept.employeeCount ?? 0} employees</Badge>
+              <Badge variant="secondary">{dept.assetCount ?? 0} assets</Badge>
             </div>
           </div>
-        );
-      })}
+        ))}
 
-      {/* Add Department card */}
-      <div className="rounded-xl border border-dashed p-5 flex items-center justify-center hover:bg-muted/50 transition cursor-pointer">
-        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-          <Plus className="h-8 w-8" />
-          <span className="text-sm font-medium">Add Department</span>
+        {/* Add Department card */}
+        <div
+          onClick={() => setDialogOpen(true)}
+          className="rounded-xl border border-dashed p-5 flex items-center justify-center hover:bg-muted/50 transition cursor-pointer"
+        >
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <Plus className="h-8 w-8" />
+            <span className="text-sm font-medium">Add Department</span>
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Create Department Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Department</DialogTitle>
+            <DialogDescription>
+              Add a new department to your organization.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="dept-name">Department Name *</Label>
+              <Input
+                id="dept-name"
+                placeholder="e.g. Engineering"
+                value={deptName}
+                onChange={(e) => setDeptName(e.target.value)}
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label>Department Head</Label>
+              <Select value={deptHead} onValueChange={(v) => setDeptHead(v ?? "")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a head (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((user: any) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.name} — {user.role}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label>Parent Department</Label>
+              <Select value={deptParent} onValueChange={(v) => setDeptParent(v ?? "")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="None (top-level)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((dept: any) => (
+                    <SelectItem key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateDepartment} disabled={submitting}>
+              {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Create Department
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -132,7 +337,7 @@ function CategoryRow({
   category,
   depth = 0,
 }: {
-  category: Category;
+  category: any;
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -161,12 +366,12 @@ function CategoryRow({
         <IconComponent className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="text-sm font-medium">{category.name}</span>
         <Badge variant="secondary" className="ml-auto">
-          {category.assetCount}
+          {category.assetCount ?? 0}
         </Badge>
       </div>
       {expanded &&
         hasChildren &&
-        category.children.map((child) => (
+        category.children.map((child: any) => (
           <CategoryRow key={child.id} category={child} depth={depth + 1} />
         ))}
     </>
@@ -174,25 +379,116 @@ function CategoryRow({
 }
 
 function CategoriesTab() {
+  const [categories, setCategories] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [catName, setCatName] = useState("");
+
+  useEffect(() => {
+    categoriesApi.tree()
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setCategories(res.data.tree || res.data.categories || res.data || []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  function handleCreateCategory() {
+    if (!catName.trim()) {
+      toast.error("Category name is required");
+      return;
+    }
+    setSubmitting(true);
+    categoriesApi.create({ name: catName.trim() })
+      .then((res: any) => {
+        if (res.success) {
+          toast.success(res.message || "Category created");
+          setDialogOpen(false);
+          setCatName("");
+          categoriesApi.tree().then((r: any) => {
+            if (r.success && r.data) {
+              setCategories(r.data.tree || r.data.categories || r.data || []);
+            }
+          });
+        } else {
+          toast.error(res.message || "Failed");
+        }
+      })
+      .catch((err: Error) => toast.error(err.message))
+      .finally(() => setSubmitting(false));
+  }
+
+  if (loading) return <TreeSkeleton rows={8} />;
+
   return (
-    <div className="space-y-1">
-      {categories.map((category) => (
-        <CategoryRow key={category.id} category={category} />
-      ))}
-    </div>
+    <>
+      <div className="space-y-1">
+        {categories.map((category: any) => (
+          <CategoryRow key={category.id} category={category} />
+        ))}
+      </div>
+      <div className="mt-4">
+        <Button variant="outline" onClick={() => setDialogOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Category
+        </Button>
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Create Category</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label>Category Name *</Label>
+              <Input
+                placeholder="e.g. Laptops"
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button>
+            <Button onClick={handleCreateCategory} disabled={submitting}>
+              {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 // ===== EMPLOYEES TAB =====
 function EmployeesTab() {
   const [search, setSearch] = useState("");
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filteredUsers = users.filter(
-    (user) =>
-      user.name.toLowerCase().includes(search.toLowerCase()) ||
-      user.email.toLowerCase().includes(search.toLowerCase()) ||
-      user.designation.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    usersApi.list({ limit: 100 })
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setEmployees(res.data.users || res.data || []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filteredUsers = employees.filter(
+    (user: any) =>
+      (user.name || "").toLowerCase().includes(search.toLowerCase()) ||
+      (user.email || "").toLowerCase().includes(search.toLowerCase())
   );
+
+  if (loading) return <TableSkeleton rows={6} />;
 
   return (
     <div className="space-y-4">
@@ -213,18 +509,15 @@ function EmployeesTab() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredUsers.map((user) => (
+          {filteredUsers.map((user: any) => (
             <TableRow key={user.id}>
               <TableCell>
                 <div className="flex items-center gap-2">
                   <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium shrink-0">
-                    {getInitials(user.name)}
+                    {getInitials(user.name || "")}
                   </div>
                   <div>
                     <p className="font-medium text-sm">{user.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {user.designation}
-                    </p>
                   </div>
                 </div>
               </TableCell>
@@ -241,7 +534,7 @@ function EmployeesTab() {
                     roleBadgeColors[user.role] || roleBadgeColors.EMPLOYEE
                   )}
                 >
-                  {user.role.replace(/_/g, " ")}
+                  {(user.role || "EMPLOYEE").replace(/_/g, " ")}
                 </span>
               </TableCell>
               <TableCell>
@@ -259,7 +552,7 @@ function EmployeesTab() {
                       user.status === "ACTIVE" ? "bg-green-500" : "bg-gray-400"
                     )}
                   />
-                  {user.status}
+                  {user.status || "ACTIVE"}
                 </span>
               </TableCell>
             </TableRow>

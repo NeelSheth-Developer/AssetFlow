@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { assets } from "@/data/mock";
+import { useState, useEffect } from "react";
+import { assetsApi, categoriesApi, locationsApi } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -86,6 +86,12 @@ export default function AssetsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Data state
+  const [assets, setAssets] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+
   // Form state
   const [assetName, setAssetName] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
@@ -95,14 +101,43 @@ export default function AssetsPage() {
   const [location, setLocation] = useState("");
   const [isBookable, setIsBookable] = useState(false);
 
+  useEffect(() => {
+    assetsApi.list()
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setAssets(res.data.assets || res.data.items || res.data || []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+
+    // Fetch categories for the dialog
+    categoriesApi.list()
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setCategories(res.data.categories || res.data || []);
+        }
+      })
+      .catch(() => {});
+
+    // Fetch locations for the dialog
+    locationsApi.list()
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setLocations(res.data.locations || res.data || []);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const filteredAssets = assets
     .filter(
-      (asset) =>
-        asset.name.toLowerCase().includes(search.toLowerCase()) ||
-        asset.tag.toLowerCase().includes(search.toLowerCase()) ||
+      (asset: any) =>
+        (asset.name || "").toLowerCase().includes(search.toLowerCase()) ||
+        (asset.tag || "").toLowerCase().includes(search.toLowerCase()) ||
         (asset.category?.name || "").toLowerCase().includes(search.toLowerCase())
     )
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
 
   function resetForm() {
     setAssetName("");
@@ -115,13 +150,58 @@ export default function AssetsPage() {
   }
 
   function handleSubmit() {
+    if (!assetName.trim()) {
+      toast.error("Asset name is required");
+      return;
+    }
+    if (!category) {
+      toast.error("Please select a category");
+      return;
+    }
+
     setSubmitting(true);
-    setTimeout(() => {
-      toast.success("Asset registered successfully — Tag: AF-0016");
+    assetsApi.create({
+      name: assetName,
+      serialNo: serialNumber || undefined,
+      categoryId: category,
+      condition: condition || "NEW",
+      location: location || undefined,
+      isBookable: isBookable,
+      acquisitionCost: purchaseValue ? Number(purchaseValue) : undefined,
+    }).then((res: any) => {
+      toast.success(`Asset registered — Tag: ${res.data?.asset?.tag || res.data?.tag || "Created"}`);
       setSubmitting(false);
       setDialogOpen(false);
       resetForm();
-    }, 500);
+      // Refresh list
+      assetsApi.list().then((r: any) => {
+        if (r.success && r.data) {
+          setAssets(r.data.assets || r.data.items || r.data || []);
+        }
+      }).catch(() => {});
+    }).catch((err: Error) => {
+      toast.error(err.message || "Failed to register asset");
+      setSubmitting(false);
+    });
+  }
+
+  // Loading skeleton
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="h-7 w-32 bg-muted animate-pulse rounded" />
+            <div className="h-4 w-64 bg-muted animate-pulse rounded mt-2" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-12 bg-muted animate-pulse rounded" />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -180,8 +260,15 @@ export default function AssetsPage() {
         </div>
       </div>
 
+      {/* Empty state */}
+      {filteredAssets.length === 0 && (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">No assets found</p>
+        </div>
+      )}
+
       {/* List View */}
-      {view === "list" && (
+      {view === "list" && filteredAssets.length > 0 && (
         <Table>
           <TableHeader>
             <TableRow>
@@ -195,25 +282,25 @@ export default function AssetsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredAssets.map((asset) => (
+            {filteredAssets.map((asset: any) => (
               <TableRow key={asset.id}>
                 <TableCell className="font-mono text-xs">
-                  {asset.tag}
+                  {asset.tag || "—"}
                 </TableCell>
                 <TableCell className="font-medium">{asset.name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {asset.category?.name || "—"}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge status={asset.status} />
+                  <StatusBadge status={asset.status || "AVAILABLE"} />
                 </TableCell>
                 <TableCell>
-                  {asset.assignedTo ? (
+                  {(asset.currentHolder || asset.assignedTo) ? (
                     <div className="flex items-center gap-1.5">
                       <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-medium">
-                        {getInitials(asset.assignedTo.name)}
+                        {getInitials((asset.currentHolder || asset.assignedTo)?.name || (asset.currentHolder || asset.assignedTo) || "")}
                       </div>
-                      <span className="text-sm">{asset.assignedTo.name}</span>
+                      <span className="text-sm">{(asset.currentHolder || asset.assignedTo)?.name || (asset.currentHolder || asset.assignedTo)}</span>
                     </div>
                   ) : (
                     <span className="text-muted-foreground">—</span>
@@ -223,7 +310,9 @@ export default function AssetsPage() {
                   {asset.location || "—"}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {new Date(asset.createdAt).toLocaleDateString()}
+                  {asset.createdAt
+                    ? new Date(asset.createdAt).toLocaleDateString()
+                    : "—"}
                 </TableCell>
               </TableRow>
             ))}
@@ -232,9 +321,9 @@ export default function AssetsPage() {
       )}
 
       {/* Grid View */}
-      {view === "grid" && (
+      {view === "grid" && filteredAssets.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filteredAssets.map((asset) => {
+          {filteredAssets.map((asset: any) => {
             const categoryIcon = asset.category?.icon || "Monitor";
             const IconComponent = iconMap[categoryIcon] || Monitor;
 
@@ -254,17 +343,17 @@ export default function AssetsPage() {
                     {asset.name}
                   </p>
                   <p className="text-xs font-mono text-muted-foreground">
-                    {asset.tag}
+                    {asset.tag || "—"}
                   </p>
-                  <StatusBadge status={asset.status} />
+                  <StatusBadge status={asset.status || "AVAILABLE"} />
                   <div className="pt-1">
-                    {asset.assignedTo ? (
+                    {(asset.currentHolder || asset.assignedTo) ? (
                       <div className="flex items-center gap-1.5">
                         <div className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[9px] font-medium">
-                          {getInitials(asset.assignedTo.name)}
+                          {getInitials((asset.currentHolder || asset.assignedTo)?.name || (asset.currentHolder || asset.assignedTo) || "")}
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {asset.assignedTo.name}
+                          {(asset.currentHolder || asset.assignedTo)?.name || (asset.currentHolder || asset.assignedTo)}
                         </span>
                       </div>
                     ) : (
@@ -321,10 +410,15 @@ export default function AssetsPage() {
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="IT">IT</SelectItem>
-                  <SelectItem value="Furniture">Furniture</SelectItem>
-                  <SelectItem value="Equipment">Equipment</SelectItem>
-                  <SelectItem value="Vehicles">Vehicles</SelectItem>
+                  {categories.length > 0 ? (
+                    categories.map((cat: any) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="general" disabled>Loading categories...</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -349,9 +443,9 @@ export default function AssetsPage() {
                   <SelectValue placeholder="Select condition" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="New">New</SelectItem>
-                  <SelectItem value="Refurbished">Refurbished</SelectItem>
-                  <SelectItem value="Used">Used</SelectItem>
+                  <SelectItem value="NEW">New</SelectItem>
+                  <SelectItem value="REFURBISHED">Refurbished</SelectItem>
+                  <SelectItem value="USED">Used</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -364,9 +458,19 @@ export default function AssetsPage() {
                   <SelectValue placeholder="Select location" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Mumbai HQ">Mumbai HQ</SelectItem>
-                  <SelectItem value="Bangalore Tech Park">Bangalore Tech Park</SelectItem>
-                  <SelectItem value="Pune Dev Center">Pune Dev Center</SelectItem>
+                  {locations.length > 0 ? (
+                    locations.map((loc: any) => (
+                      <SelectItem key={loc.id || loc.name} value={loc.id || loc.name}>
+                        {loc.name}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <>
+                      <SelectItem value="Mumbai HQ">Mumbai HQ</SelectItem>
+                      <SelectItem value="Bangalore Tech Park">Bangalore Tech Park</SelectItem>
+                      <SelectItem value="Pune Dev Center">Pune Dev Center</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>

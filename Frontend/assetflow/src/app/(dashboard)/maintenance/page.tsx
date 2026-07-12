@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { maintenanceRequests, assets } from "@/data/mock";
+import { useState, useEffect } from "react";
+import { maintenanceApi, assetsApi } from "@/lib/api";
 import {
   Table,
   TableBody,
@@ -35,13 +35,13 @@ import {
 import { toast } from "sonner";
 
 // ─── Pipeline stages ────────────────────────────────────────
-const PIPELINE_STAGES = ["PENDING", "APPROVED", "ASSIGNED", "IN_PROGRESS", "RESOLVED"] as const;
+const PIPELINE_STAGES = ["PENDING", "APPROVED", "TECHNICIAN_ASSIGNED", "IN_PROGRESS", "RESOLVED"] as const;
 type PipelineStage = (typeof PIPELINE_STAGES)[number];
 
 const stageLabels: Record<PipelineStage, string> = {
   PENDING: "Pending",
   APPROVED: "Approved",
-  ASSIGNED: "Assigned",
+  TECHNICIAN_ASSIGNED: "Assigned",
   IN_PROGRESS: "In Progress",
   RESOLVED: "Resolved",
 };
@@ -61,6 +61,8 @@ const statusClasses: Record<string, string> = {
   APPROVED:
     "bg-blue-100/80 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400",
   ASSIGNED:
+    "bg-indigo-100/80 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400",
+  TECHNICIAN_ASSIGNED:
     "bg-indigo-100/80 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400",
   IN_PROGRESS:
     "bg-amber-100/80 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400",
@@ -97,16 +99,45 @@ export default function MaintenancePage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Data state
+  const [maintenanceRequests, setMaintenanceRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [assetsList, setAssetsList] = useState<any[]>([]);
+
   // Form state
   const [selectedAsset, setSelectedAsset] = useState("");
   const [issueType, setIssueType] = useState("");
   const [priority, setPriority] = useState("");
   const [description, setDescription] = useState("");
 
+  useEffect(() => {
+    maintenanceApi.list()
+      .then((res: any) => {
+        if (res.success && res.data) {
+          setMaintenanceRequests(res.data.requests || res.data.items || res.data || []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Fetch assets when dialog opens
+  useEffect(() => {
+    if (dialogOpen) {
+      assetsApi.list()
+        .then((res: any) => {
+          if (res.success && res.data) {
+            setAssetsList(res.data.assets || res.data.items || res.data || []);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [dialogOpen]);
+
   // Count per stage
   const stageCounts = PIPELINE_STAGES.reduce(
     (acc, stage) => {
-      acc[stage] = maintenanceRequests.filter((r) => r.status === stage).length;
+      acc[stage] = maintenanceRequests.filter((r: any) => r.status === stage).length;
       return acc;
     },
     {} as Record<PipelineStage, number>
@@ -114,7 +145,7 @@ export default function MaintenancePage() {
 
   // Filter requests
   const filteredRequests = selectedStage
-    ? maintenanceRequests.filter((r) => r.status === selectedStage)
+    ? maintenanceRequests.filter((r: any) => r.status === selectedStage)
     : maintenanceRequests;
 
   function resetForm() {
@@ -124,14 +155,86 @@ export default function MaintenancePage() {
     setDescription("");
   }
 
+  function handleApproveRequest(id: string) {
+    maintenanceApi.approve(id)
+      .then((res: any) => {
+        if (res.success) {
+          toast.success(res.message || "Request approved");
+          maintenanceApi.list().then((r: any) => {
+            if (r.success && r.data) {
+              setMaintenanceRequests(r.data.requests || r.data.items || r.data || []);
+            }
+          });
+        } else {
+          toast.error(res.message || "Approval failed");
+        }
+      })
+      .catch((err: Error) => toast.error(err.message || "Failed"));
+  }
+
+  function handleRejectRequest(id: string) {
+    const reason = prompt("Rejection reason:");
+    if (!reason) return;
+    maintenanceApi.reject(id, reason)
+      .then((res: any) => {
+        if (res.success) {
+          toast.success(res.message || "Request rejected");
+          maintenanceApi.list().then((r: any) => {
+            if (r.success && r.data) {
+              setMaintenanceRequests(r.data.requests || r.data.items || r.data || []);
+            }
+          });
+        } else {
+          toast.error(res.message || "Rejection failed");
+        }
+      })
+      .catch((err: Error) => toast.error(err.message || "Failed"));
+  }
+
   function handleSubmit() {
+    if (!selectedAsset) { toast.error("Please select an asset"); return; }
+    if (!description.trim()) { toast.error("Please describe the issue"); return; }
+
     setSubmitting(true);
-    setTimeout(() => {
+    maintenanceApi.create({
+      assetId: selectedAsset,
+      issue: description,
+      issueType: issueType || undefined,
+      priority: priority || undefined,
+    }).then(() => {
       toast.success("Maintenance request submitted");
       setSubmitting(false);
       setDialogOpen(false);
       resetForm();
-    }, 500);
+      // Refresh
+      maintenanceApi.list().then((res: any) => {
+        if (res.success && res.data) {
+          setMaintenanceRequests(res.data.requests || res.data.items || res.data || []);
+        }
+      }).catch(() => {});
+    }).catch((err: Error) => {
+      toast.error(err.message || "Request failed");
+      setSubmitting(false);
+    });
+  }
+
+  // Loading skeleton
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-7 w-40 bg-muted animate-pulse rounded" />
+        <div className="flex gap-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-8 w-24 bg-muted animate-pulse rounded-full" />
+          ))}
+        </div>
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-14 bg-muted animate-pulse rounded" />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -170,95 +273,124 @@ export default function MaintenancePage() {
       </div>
 
       {/* ─── Data Table ────────────────────────────────── */}
-      <div className="bg-card rounded-xl border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[60px]">Priority</TableHead>
-              <TableHead>Asset</TableHead>
-              <TableHead>Issue Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Assigned To</TableHead>
-              <TableHead>Raised By</TableHead>
-              <TableHead>Date</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredRequests.map((req) => (
-              <TableRow key={req.id}>
-                {/* Priority */}
-                <TableCell>
-                  <Circle
-                    className={cn(
-                      "h-3 w-3 fill-current",
-                      priorityColors[req.priority],
-                      req.priority === "CRITICAL" && "animate-pulse"
-                    )}
-                  />
-                </TableCell>
-
-                {/* Asset */}
-                <TableCell>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm truncate">
-                      {req.asset.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {req.asset.tag}
-                    </p>
-                  </div>
-                </TableCell>
-
-                {/* Issue Type */}
-                <TableCell>
-                  <Badge variant="secondary" className="text-xs">
-                    {formatStatus(req.issueType)}
-                  </Badge>
-                </TableCell>
-
-                {/* Status */}
-                <TableCell>
-                  <Badge
-                    variant="secondary"
-                    className={cn(
-                      "text-xs",
-                      statusClasses[req.status]
-                    )}
-                  >
-                    {formatStatus(req.status)}
-                  </Badge>
-                </TableCell>
-
-                {/* Assigned To */}
-                <TableCell>
-                  {req.technician ? (
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
-                        {getInitials(req.technician.name)}
-                      </span>
-                      <span className="text-sm">{req.technician.name}</span>
-                    </span>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">
-                      Unassigned
-                    </span>
-                  )}
-                </TableCell>
-
-                {/* Raised By */}
-                <TableCell className="text-sm">
-                  {req.raisedBy.name}
-                </TableCell>
-
-                {/* Date */}
-                <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                  {format(new Date(req.createdAt), "MMM d, yyyy")}
-                </TableCell>
+      {filteredRequests.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">No maintenance requests found</p>
+        </div>
+      ) : (
+        <div className="bg-card rounded-xl border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[60px]">Priority</TableHead>
+                <TableHead>Asset</TableHead>
+                <TableHead>Issue Type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Assigned To</TableHead>
+                <TableHead>Raised By</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {filteredRequests.map((req: any, idx: number) => (
+                <TableRow key={req.id || idx}>
+                  {/* Priority */}
+                  <TableCell>
+                    <Circle
+                      className={cn(
+                        "h-3 w-3 fill-current",
+                        priorityColors[req.priority] || "text-gray-400",
+                        req.priority === "CRITICAL" && "animate-pulse"
+                      )}
+                    />
+                  </TableCell>
+
+                  {/* Asset */}
+                  <TableCell>
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">
+                        {req.asset?.name || req.assetName || "Unknown"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {req.asset?.tag || req.assetTag || "—"}
+                      </p>
+                    </div>
+                  </TableCell>
+
+                  {/* Issue Type */}
+                  <TableCell>
+                    <Badge variant="secondary" className="text-xs">
+                      {formatStatus(req.issueType || req.issue_type || "OTHER")}
+                    </Badge>
+                  </TableCell>
+
+                  {/* Status */}
+                  <TableCell>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "text-xs",
+                        statusClasses[req.status] || ""
+                      )}
+                    >
+                      {formatStatus(req.status || "PENDING")}
+                    </Badge>
+                  </TableCell>
+
+                  {/* Assigned To */}
+                  <TableCell>
+                    {req.technician ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
+                          {getInitials(req.technician.name || req.technician)}
+                        </span>
+                        <span className="text-sm">{req.technician.name || req.technician}</span>
+                      </span>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        Unassigned
+                      </span>
+                    )}
+                  </TableCell>
+
+                  {/* Raised By */}
+                  <TableCell className="text-sm">
+                    {req.raisedBy?.name || req.reporter?.name || "—"}
+                  </TableCell>
+
+                  {/* Date */}
+                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                    {req.createdAt
+                      ? format(new Date(req.createdAt), "MMM d, yyyy")
+                      : "—"}
+                  </TableCell>
+
+                  {/* Actions */}
+                  <TableCell>
+                    {req.status === "PENDING" && (
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => handleApproveRequest(req.id)}
+                          className="text-xs bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400 px-2 py-1 rounded hover:bg-green-200 transition"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleRejectRequest(req.id)}
+                          className="text-xs bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400 px-2 py-1 rounded hover:bg-red-200 transition"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {/* ─── New Maintenance Request Dialog ────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -279,11 +411,15 @@ export default function MaintenancePage() {
                   <SelectValue placeholder="Select an asset" />
                 </SelectTrigger>
                 <SelectContent>
-                  {assets.map((asset) => (
-                    <SelectItem key={asset.id} value={asset.id}>
-                      {asset.name} ({asset.tag})
-                    </SelectItem>
-                  ))}
+                  {assetsList.length > 0 ? (
+                    assetsList.map((asset: any) => (
+                      <SelectItem key={asset.id} value={asset.id}>
+                        {asset.name} ({asset.tag || "No tag"})
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="loading" disabled>Loading assets...</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>

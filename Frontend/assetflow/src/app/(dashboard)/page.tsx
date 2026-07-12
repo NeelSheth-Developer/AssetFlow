@@ -1,14 +1,9 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/auth-store";
-import {
-  dashboardKPIs,
-  activityLog,
-  utilizationData,
-  upcomingReturns,
-} from "@/data/mock";
 import { motion } from "framer-motion";
-import { Package, Calendar, Wrench } from "lucide-react";
+import { Package, Calendar, Wrench, AlertCircle } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -20,6 +15,9 @@ import {
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+
+// ─── API Base ───────────────────────────────────────────────
+const API = "https://assetflow-production-85d2.up.railway.app/api";
 
 // ─── KPI Config ─────────────────────────────────────────────
 const kpiCards = [
@@ -38,8 +36,8 @@ const kpiCards = [
     trendColor: "text-blue-600",
   },
   {
-    label: "Maintenance Today",
-    key: "maintenanceToday" as const,
+    label: "Under Maintenance",
+    key: "underMaintenance" as const,
     accent: "bg-orange-500",
     trend: null,
     trendColor: "",
@@ -59,27 +57,27 @@ const kpiCards = [
     trendColor: "",
   },
   {
-    label: "Overdue Returns",
-    key: "overdueReturns" as const,
+    label: "Upcoming Returns",
+    key: "upcomingReturns" as const,
     accent: "bg-red-500",
     trend: "⚠ Action needed",
     trendColor: "text-red-600",
   },
 ];
 
-// ─── Color map for activity dots ────────────────────────────
-const dotColorMap: Record<string, string> = {
-  blue: "bg-blue-500",
-  orange: "bg-orange-500",
-  green: "bg-green-500",
-  purple: "bg-purple-500",
-  indigo: "bg-indigo-500",
-  emerald: "bg-emerald-500",
-  amber: "bg-amber-500",
-  red: "bg-red-500",
-  yellow: "bg-yellow-500",
-  violet: "bg-violet-500",
-  slate: "bg-slate-500",
+// ─── Color map for activity type dots ───────────────────────
+const activityTypeColor: Record<string, string> = {
+  ALLOCATION: "bg-blue-500",
+  RETURN: "bg-green-500",
+  MAINTENANCE: "bg-orange-500",
+  BOOKING: "bg-indigo-500",
+  TRANSFER: "bg-amber-500",
+  AUDIT: "bg-purple-500",
+  ASSET: "bg-emerald-500",
+  ASSET_CREATED: "bg-emerald-500",
+  ASSET_UPDATED: "bg-slate-500",
+  USER_CHANGE: "bg-slate-500",
+  SYSTEM: "bg-gray-400",
 };
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -97,6 +95,20 @@ function getGreeting() {
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
   return "Good evening";
+}
+
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return format(date, "MMM d");
 }
 
 // ─── Animation Variants ─────────────────────────────────────
@@ -118,6 +130,100 @@ const itemVariants = {
 // ═══════════════════════════════════════════════════════════════
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user);
+
+  const [kpis, setKpis] = useState<Record<string, number> | null>(null);
+  const [activityLog, setActivityLog] = useState<any[] | null>(null);
+  const [utilizationData, setUtilizationData] = useState<any[] | null>(null);
+  const [upcomingReturns, setUpcomingReturns] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    Promise.allSettled([
+      fetch(`${API}/dashboard/kpis`, { credentials: "include" }).then((r) => r.json()),
+      fetch(`${API}/dashboard/activity-feed?limit=8`, { credentials: "include" }).then((r) => r.json()),
+      fetch(`${API}/dashboard/utilization-chart?days=30`, { credentials: "include" }).then((r) => r.json()),
+      fetch(`${API}/dashboard/upcoming-returns?limit=5`, { credentials: "include" }).then((r) => r.json()),
+    ])
+      .then(([kpisRes, activityRes, chartRes, returnsRes]) => {
+        if (!mounted) return;
+
+        let anySuccess = false;
+
+        // KPIs
+        if (kpisRes.status === "fulfilled" && kpisRes.value.success) {
+          setKpis(kpisRes.value.data);
+          anySuccess = true;
+        }
+
+        // Activity Feed
+        if (activityRes.status === "fulfilled" && activityRes.value.success) {
+          setActivityLog(activityRes.value.data.activities || []);
+          anySuccess = true;
+        }
+
+        // Utilization Chart
+        if (chartRes.status === "fulfilled" && chartRes.value.success) {
+          setUtilizationData(chartRes.value.data.dataPoints || []);
+          anySuccess = true;
+        }
+
+        // Upcoming Returns
+        if (returnsRes.status === "fulfilled" && returnsRes.value.success) {
+          setUpcomingReturns(returnsRes.value.data.returns || []);
+          anySuccess = true;
+        }
+
+        if (!anySuccess) setError(true);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Loading skeleton
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-8 w-64 bg-muted animate-pulse rounded" />
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-24 bg-muted animate-pulse rounded-xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          <div className="lg:col-span-3 h-64 bg-muted animate-pulse rounded-xl" />
+          <div className="lg:col-span-2 h-64 bg-muted animate-pulse rounded-xl" />
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center space-y-4">
+        <AlertCircle className="h-12 w-12 text-muted-foreground" />
+        <h2 className="text-lg font-semibold">Unable to load data</h2>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          We couldn't fetch dashboard data from the server. Please check your
+          connection and try again.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -178,10 +284,10 @@ export default function DashboardPage() {
                 {kpi.label}
               </p>
               <p className="text-2xl font-bold mt-1 flex items-center gap-2">
-                {dashboardKPIs[kpi.key]}
-                {/* Pulsing dot for overdue */}
-                {kpi.key === "overdueReturns" &&
-                  dashboardKPIs.overdueReturns > 0 && (
+                {kpis?.[kpi.key] ?? 0}
+                {/* Pulsing dot for upcoming returns with overdue items */}
+                {kpi.key === "upcomingReturns" &&
+                  (kpis?.upcomingReturns || 0) > 0 && (
                     <span className="relative flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
@@ -213,40 +319,44 @@ export default function DashboardPage() {
           </div>
 
           <div className="bg-card rounded-xl border p-5">
-            {activityLog.slice(0, 8).map((log) => (
-              <div
-                key={log.id}
-                className="flex items-center gap-3 py-3 border-b border-border/30 last:border-0"
-              >
-                {/* Color dot */}
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full shrink-0",
-                    dotColorMap[log.color] ?? "bg-slate-400"
-                  )}
-                />
+            {!activityLog || activityLog.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No recent activity
+              </p>
+            ) : (
+              activityLog.map((log: any, idx: number) => (
+                <div
+                  key={log.id || idx}
+                  className="flex items-center gap-3 py-3 border-b border-border/30 last:border-0"
+                >
+                  {/* Color dot based on activity type */}
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full shrink-0",
+                      activityTypeColor[log.actionType || log.type] ?? "bg-slate-400"
+                    )}
+                  />
 
-                {/* Avatar */}
-                <span className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium shrink-0">
-                  {log.entities.user
-                    ? getInitials(log.entities.user.name)
-                    : "?"}
-                </span>
+                  {/* Avatar */}
+                  <span className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium shrink-0">
+                    {log.actor?.name ? getInitials(log.actor.name) : "?"}
+                  </span>
 
-                {/* Description */}
-                <p className="text-sm truncate">
-                  <span className="font-medium">
-                    {log.entities.user?.name}
-                  </span>{" "}
-                  {log.description}
-                </p>
+                  {/* Description */}
+                  <p className="text-sm truncate">
+                    <span className="font-medium">
+                      {log.actor?.name || "System"}
+                    </span>{" "}
+                    {log.description || ""}
+                  </p>
 
-                {/* Relative time */}
-                <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap shrink-0">
-                  {log.relativeTime}
-                </span>
-              </div>
-            ))}
+                  {/* Relative time */}
+                  <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap shrink-0">
+                    {log.createdAt ? timeAgo(log.createdAt) : ""}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -261,107 +371,141 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            <div className="h-[200px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={utilizationData}
-                  margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient
-                      id="utilizationGradient"
-                      x1="0"
-                      y1="0"
-                      x2="0"
-                      y2="1"
-                    >
-                      <stop
-                        offset="0%"
-                        stopColor="hsl(238, 84%, 60%)"
-                        stopOpacity={0.2}
-                      />
-                      <stop
-                        offset="100%"
-                        stopColor="hsl(238, 84%, 60%)"
-                        stopOpacity={0}
-                      />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 10 }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(v: string) => format(new Date(v), "d MMM")}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tick={{ fontSize: 10 }}
-                    tickLine={false}
-                    axisLine={false}
-                    domain={[0, 100]}
-                    tickFormatter={(v: number) => `${v}%`}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      fontSize: 12,
-                      borderRadius: 8,
-                      border: "1px solid hsl(220, 13%, 91%)",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                    }}
-                    labelFormatter={(v) =>
-                      format(new Date(String(v)), "MMM d, yyyy")
-                    }
-                    formatter={(value) => [`${value}%`, "Utilization"]}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="utilization"
-                    stroke="hsl(238, 84%, 60%)"
-                    strokeWidth={2}
-                    fill="url(#utilizationGradient)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            {!utilizationData || utilizationData.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-12">
+                No data available
+              </p>
+            ) : (
+              <div className="h-[200px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={utilizationData}
+                    margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient
+                        id="utilizationGradient"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="0%"
+                          stopColor="hsl(238, 84%, 60%)"
+                          stopOpacity={0.2}
+                        />
+                        <stop
+                          offset="100%"
+                          stopColor="hsl(238, 84%, 60%)"
+                          stopOpacity={0}
+                        />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v: string) => {
+                        try {
+                          return format(new Date(v), "d MMM");
+                        } catch {
+                          return v;
+                        }
+                      }}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                      domain={[0, 100]}
+                      tickFormatter={(v: number) => `${v}%`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        fontSize: 12,
+                        borderRadius: 8,
+                        border: "1px solid hsl(220, 13%, 91%)",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                      }}
+                      labelFormatter={(v) => {
+                        try {
+                          return format(new Date(String(v)), "MMM d, yyyy");
+                        } catch {
+                          return String(v);
+                        }
+                      }}
+                      formatter={(value) => [`${value}%`, "Utilization"]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="utilization"
+                      stroke="hsl(238, 84%, 60%)"
+                      strokeWidth={2}
+                      fill="url(#utilizationGradient)"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
           {/* Widget 2: Upcoming Returns */}
           <div className="bg-card rounded-xl border p-5">
             <h3 className="text-sm font-semibold mb-4">Upcoming Returns</h3>
 
-            <div className="space-y-3">
-              {upcomingReturns.slice(0, 4).map((item) => (
-                <div
-                  key={item.allocationId}
-                  className="flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p
-                      className={cn(
-                        "text-sm font-medium truncate",
-                        item.status === "OVERDUE" && "text-red-600"
-                      )}
-                    >
-                      {item.asset.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {item.holder.name}
-                    </p>
-                  </div>
+            {!upcomingReturns || upcomingReturns.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No upcoming returns
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {upcomingReturns.map((item: any, idx: number) => (
+                  <div
+                    key={item.allocationId || item.id || idx}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={cn(
+                          "text-sm font-medium truncate",
+                          item.status === "OVERDUE" && "text-red-600"
+                        )}
+                      >
+                        {item.asset?.name || "Unknown Asset"}
+                        {item.asset?.tag && (
+                          <span className="text-xs text-muted-foreground ml-1">
+                            ({item.asset.tag})
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {item.holder?.name || "Unknown"}
+                      </p>
+                    </div>
 
-                  {item.status === "OVERDUE" ? (
-                    <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 text-xs rounded-full px-2 py-0.5 whitespace-nowrap font-medium">
-                      Overdue
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {format(new Date(item.expectedReturnDate), "MMM d, yyyy")}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
+                    {item.status === "OVERDUE" ? (
+                      <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 text-xs rounded-full px-2 py-0.5 whitespace-nowrap font-medium">
+                        {item.daysOverdue
+                          ? `${item.daysOverdue}d overdue`
+                          : "Overdue"}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {item.expectedReturnDate
+                          ? format(
+                              new Date(item.expectedReturnDate),
+                              "MMM d, yyyy"
+                            )
+                          : "—"}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
