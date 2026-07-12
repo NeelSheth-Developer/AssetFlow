@@ -1,25 +1,28 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
-import { Sun, Moon, Monitor, LogOut } from "lucide-react";
+import { LogOut, Loader2, Lock, User, Mail, Building2, Shield } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
+import { authApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const { theme, setTheme } = useTheme();
 
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [inAppNotifications, setInAppNotifications] = useState(true);
+  // Change password state
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [pwErrors, setPwErrors] = useState<Record<string, boolean>>({});
 
   const handleSignOut = () => {
     logout();
@@ -27,148 +30,128 @@ export default function SettingsPage() {
     toast("Signed out successfully");
   };
 
+  async function handleChangePassword() {
+    const errors: Record<string, boolean> = {};
+    if (!currentPassword) errors.current = true;
+    if (!newPassword) errors.new = true;
+    else if (newPassword.length < 8) errors.newLength = true;
+    if (!confirmPassword) errors.confirm = true;
+    else if (newPassword !== confirmPassword) errors.mismatch = true;
+    setPwErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      if (errors.mismatch) toast.error("Passwords do not match");
+      else if (errors.newLength) toast.error("New password must be at least 8 characters");
+      else toast.error("Fill all required fields");
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      await authApi.changePassword(currentPassword, newPassword);
+      toast.success("Password changed successfully");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPwErrors({});
+    } catch (e: any) {
+      toast.error(e.message || "Failed to change password");
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Manage your account preferences
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+        <p className="text-muted-foreground text-sm mt-1">View your account details and manage your password</p>
       </div>
 
-      {/* Profile Section */}
-      <div className="glass-heavy rounded-xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold">Profile</h2>
+      {/* Profile Info */}
+      <div className="bg-card rounded-xl border p-6 space-y-4">
+        <h2 className="text-lg font-semibold">Account Information</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Name</Label>
-            <div className="glass-light rounded-lg px-3 py-2 text-sm">
-              {user?.name ?? "—"}
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5"><User className="size-3" />Name</Label>
+            <div className="bg-muted/50 rounded-lg px-3 py-2.5 text-sm font-medium">{user?.name ?? "—"}</div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5"><Mail className="size-3" />Email</Label>
+            <div className="bg-muted/50 rounded-lg px-3 py-2.5 text-sm font-medium">{user?.email ?? "—"}</div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5"><Shield className="size-3" />Role</Label>
+            <div className="flex items-center">
+              <Badge variant="secondary" className="text-xs">{user?.role?.replace(/_/g, " ") ?? "—"}</Badge>
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Email</Label>
-            <div className="glass-light rounded-lg px-3 py-2 text-sm">
-              {user?.email ?? "—"}
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Role</Label>
-            <div>
-              <Badge variant="secondary" className="text-xs">
-                {user?.role?.replace("_", " ") ?? "—"}
-              </Badge>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Department</Label>
-            <div>
-              <Badge variant="outline" className="text-xs">
-                {user?.department?.name ?? user?.designation ?? "—"}
-              </Badge>
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5"><Building2 className="size-3" />Department</Label>
+            <div className="flex items-center">
+              <Badge variant="outline" className="text-xs">{user?.department?.name ?? "Not assigned"}</Badge>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Appearance Section */}
-      <div className="glass-heavy rounded-xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold">Appearance</h2>
-        <p className="text-sm text-muted-foreground">
-          Choose your preferred theme
-        </p>
-        <div className="grid grid-cols-3 gap-3">
-          <button
-            onClick={() => setTheme("light")}
-            className={cn(
-              "flex flex-col items-center gap-2 rounded-xl p-4 border transition-all cursor-pointer",
-              theme === "light"
-                ? "border-primary bg-primary/5 text-primary"
-                : "border-border hover:border-primary/30 text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Sun className="h-5 w-5" />
-            <span className="text-xs font-medium">Light</span>
-          </button>
-          <button
-            onClick={() => setTheme("dark")}
-            className={cn(
-              "flex flex-col items-center gap-2 rounded-xl p-4 border transition-all cursor-pointer",
-              theme === "dark"
-                ? "border-primary bg-primary/5 text-primary"
-                : "border-border hover:border-primary/30 text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Moon className="h-5 w-5" />
-            <span className="text-xs font-medium">Dark</span>
-          </button>
-          <button
-            onClick={() => setTheme("system")}
-            className={cn(
-              "flex flex-col items-center gap-2 rounded-xl p-4 border transition-all cursor-pointer",
-              theme === "system"
-                ? "border-primary bg-primary/5 text-primary"
-                : "border-border hover:border-primary/30 text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Monitor className="h-5 w-5" />
-            <span className="text-xs font-medium">System</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Notifications Section */}
-      <div className="glass-heavy rounded-xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold">Notifications</h2>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label className="text-sm font-medium">Email Notifications</Label>
-              <p className="text-xs text-muted-foreground">
-                Receive email alerts for important updates
-              </p>
-            </div>
-            <Switch
-              checked={emailNotifications}
-              onCheckedChange={(checked) => {
-                setEmailNotifications(checked);
-                toast(checked ? "Email notifications enabled" : "Email notifications disabled");
-              }}
+      {/* Change Password */}
+      <div className="bg-card rounded-xl border p-6 space-y-4">
+        <h2 className="text-lg font-semibold">Change Password</h2>
+        <p className="text-sm text-muted-foreground">Update your password. Other active sessions will be revoked.</p>
+        <div className="grid gap-4 max-w-sm">
+          <div className="grid gap-1.5">
+            <Label>Current Password <span className="text-destructive">*</span></Label>
+            <Input
+              type="password"
+              placeholder="Enter current password"
+              value={currentPassword}
+              onChange={(e) => { setCurrentPassword(e.target.value); setPwErrors({}); }}
+              className={cn(pwErrors.current && "border-destructive")}
             />
           </div>
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label className="text-sm font-medium">In-App Notifications</Label>
-              <p className="text-xs text-muted-foreground">
-                Show notifications within the app
-              </p>
-            </div>
-            <Switch
-              checked={inAppNotifications}
-              onCheckedChange={(checked) => {
-                setInAppNotifications(checked);
-                toast(checked ? "In-app notifications enabled" : "In-app notifications disabled");
-              }}
+          <div className="grid gap-1.5">
+            <Label>New Password <span className="text-destructive">*</span></Label>
+            <Input
+              type="password"
+              placeholder="Minimum 8 characters"
+              value={newPassword}
+              onChange={(e) => { setNewPassword(e.target.value); setPwErrors({}); }}
+              className={cn((pwErrors.new || pwErrors.newLength) && "border-destructive")}
             />
+            {pwErrors.newLength && <p className="text-xs text-destructive">Minimum 8 characters</p>}
           </div>
+          <div className="grid gap-1.5">
+            <Label>Confirm New Password <span className="text-destructive">*</span></Label>
+            <Input
+              type="password"
+              placeholder="Repeat new password"
+              value={confirmPassword}
+              onChange={(e) => { setConfirmPassword(e.target.value); setPwErrors({}); }}
+              className={cn((pwErrors.confirm || pwErrors.mismatch) && "border-destructive")}
+            />
+            {pwErrors.mismatch && <p className="text-xs text-destructive">Passwords do not match</p>}
+          </div>
+          <Button
+            onClick={handleChangePassword}
+            disabled={changingPassword}
+            className="px-4 py-2 rounded-lg w-fit"
+          >
+            {changingPassword && <Loader2 className="size-4 animate-spin mr-2" />}
+            <Lock className="size-4 mr-2" />
+            Change Password
+          </Button>
         </div>
       </div>
 
       {/* Sign Out */}
-      <div className="glass-heavy rounded-xl p-6">
+      <div className="bg-card rounded-xl border p-6">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-destructive">Sign Out</h2>
-            <p className="text-sm text-muted-foreground">
-              Sign out of your account on this device
-            </p>
+            <p className="text-sm text-muted-foreground">Sign out of your account on this device</p>
           </div>
-          <Button
-            variant="destructive"
-            onClick={handleSignOut}
-            className="cursor-pointer"
-          >
+          <Button variant="destructive" onClick={handleSignOut} className="px-4 py-2 rounded-lg">
             <LogOut className="mr-2 h-4 w-4" />
             Sign Out
           </Button>

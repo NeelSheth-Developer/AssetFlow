@@ -25,7 +25,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 
-const API = "https://assetflow-production-85d2.up.railway.app/api";
+const API = process.env.NEXT_PUBLIC_API_BASE || "https://assetflow-production-85d2.up.railway.app/api";
 
 // ─── Types matching backend response ────────────────────────
 interface AllocationItem {
@@ -366,7 +366,7 @@ export default function AllocationsPage() {
             {/* Asset */}
             <div className="grid gap-1.5">
               <Label>Asset *</Label>
-              <Select value={selectedAsset} onValueChange={(v) => setSelectedAsset(v ?? "")}>
+              <Select value={selectedAsset || undefined} onValueChange={(v) => setSelectedAsset(v ?? "")}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select an available asset" />
                 </SelectTrigger>
@@ -383,7 +383,7 @@ export default function AllocationsPage() {
             {/* Employee */}
             <div className="grid gap-1.5">
               <Label>Employee *</Label>
-              <Select value={selectedEmployee} onValueChange={(v) => setSelectedEmployee(v ?? "")}>
+              <Select value={selectedEmployee || undefined} onValueChange={(v) => setSelectedEmployee(v ?? "")}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select employee" />
                 </SelectTrigger>

@@ -1,4 +1,4 @@
-const API_BASE = "https://assetflow-production-85d2.up.railway.app/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "https://assetflow-production-85d2.up.railway.app/api";
 
 let isRefreshing = false;
 let refreshPromise: Promise<boolean> | null = null;

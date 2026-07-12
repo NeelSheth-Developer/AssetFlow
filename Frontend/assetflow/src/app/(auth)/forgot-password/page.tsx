@@ -181,8 +181,7 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-br from-slate-100 to-white">
-      <motion.div
+    <><motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
@@ -421,6 +420,6 @@ export default function ForgotPasswordPage() {
           )}
         </AnimatePresence>
       </motion.div>
-    </div>
+    </>
   );
 }

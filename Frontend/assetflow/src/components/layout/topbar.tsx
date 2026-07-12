@@ -2,13 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell, LogOut, Settings, User } from "lucide-react";
+import { Bell, LogOut, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "@/lib/constants";
-import { useUIStore } from "@/stores/ui-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useAuthStore } from "@/stores/auth-store";
-import { ThemeToggle } from "./theme-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,15 +22,12 @@ export function Topbar() {
   const pathname = usePathname();
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
-  const setCommandMenuOpen = useUIStore((s) => s.setCommandMenuOpen);
   const { notifications, unreadCount, markAllAsRead, markAsRead } = useNotificationStore();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
 
   useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 20);
-    };
+    const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
@@ -64,31 +59,24 @@ export function Topbar() {
         scrolled && "glass-medium border-b border-border/30"
       )}
     >
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground">AssetFlow</span>
-        <span className="text-muted-foreground/40">/</span>
-        <span className="font-medium">{currentPage}</span>
+      {/* Left — Breadcrumb + platform tagline */}
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">AssetFlow</span>
+          <span className="text-muted-foreground/40">/</span>
+          <span className="font-medium">{currentPage}</span>
+        </div>
+        <span className="hidden md:inline text-[11px] text-muted-foreground/60 italic">
+          — Enterprise Asset & Resource Management
+        </span>
       </div>
 
       {/* Right actions */}
       <div className="flex items-center gap-2">
-        {/* Search pill */}
-        <button
-          onClick={() => setCommandMenuOpen(true)}
-          className="glass-light rounded-full px-3 py-1.5 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground hover:bg-white/70 dark:hover:bg-white/10 transition-colors cursor-pointer"
-        >
-          <Search className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Search...</span>
-          <kbd className="hidden sm:inline-flex h-5 items-center rounded border border-border/50 bg-muted/50 px-1.5 text-[10px] font-medium">
-            ⌘K
-          </kbd>
-        </button>
-
         {/* Notification bell dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/20 dark:hover:bg-white/5 transition-colors cursor-pointer"
+            className="relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
             aria-label="Notifications"
           >
             <Bell className="h-4 w-4" />
@@ -100,16 +88,10 @@ export function Topbar() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
             <div className="flex items-center justify-between px-3 py-2">
-              <p className="text-sm font-semibold">
-                Notifications
-              </p>
+              <p className="text-sm font-semibold">Notifications</p>
               {unreadCount > 0 && (
                 <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    markAllAsRead();
-                    toast("All notifications marked as read");
-                  }}
+                  onClick={(e) => { e.preventDefault(); markAllAsRead(); toast("All marked as read"); }}
                   className="text-xs text-primary hover:text-primary/80 font-medium cursor-pointer"
                 >
                   Mark all read
@@ -118,9 +100,7 @@ export function Topbar() {
             </div>
             <DropdownMenuSeparator />
             {latestNotifications.length === 0 ? (
-              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No notifications
-              </div>
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">No notifications</div>
             ) : (
               latestNotifications.map((notification) => (
                 <DropdownMenuItem
@@ -128,7 +108,6 @@ export function Topbar() {
                   onClick={() => markAsRead(notification.id)}
                   className="flex items-start gap-3 px-3 py-2.5 cursor-pointer"
                 >
-                  {/* Unread indicator */}
                   <div className="mt-1.5 shrink-0">
                     {!notification.read ? (
                       <span className="block h-2 w-2 rounded-full bg-primary" />
@@ -137,22 +116,10 @@ export function Topbar() {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={cn("text-sm truncate", !notification.read && "font-medium")}>
-                      {notification.title}
-                    </p>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">
-                      {notification.message}
-                    </p>
+                    <p className={cn("text-sm truncate", !notification.read && "font-medium")}>{notification.title}</p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{notification.message}</p>
                     <p className="text-[10px] text-muted-foreground/60 mt-1">
-                      {(() => {
-                        try {
-                          const d = new Date(notification.createdAt);
-                          if (isNaN(d.getTime())) return "";
-                          return formatDistanceToNow(d, { addSuffix: true });
-                        } catch {
-                          return "";
-                        }
-                      })()}
+                      {(() => { try { const d = new Date(notification.createdAt); if (isNaN(d.getTime())) return ""; return formatDistanceToNow(d, { addSuffix: true }); } catch { return ""; } })()}
                     </p>
                   </div>
                 </DropdownMenuItem>
@@ -160,15 +127,10 @@ export function Topbar() {
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem className="cursor-pointer">
-              <Link href="/activity" className="flex w-full items-center justify-center py-1 text-sm text-primary font-medium">
-                View all notifications
-              </Link>
+              <Link href="/activity" className="flex w-full items-center justify-center py-1 text-sm text-primary font-medium">View all</Link>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-
-        {/* Theme toggle */}
-        <ThemeToggle />
 
         {/* User avatar dropdown */}
         <DropdownMenu>
@@ -184,10 +146,6 @@ export function Topbar() {
             <DropdownMenuItem onClick={() => router.push("/settings")} className="cursor-pointer">
               <User className="mr-2 h-4 w-4" />
               Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/settings")} className="cursor-pointer">
-              <Settings className="mr-2 h-4 w-4" />
-              Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer text-destructive focus:text-destructive">

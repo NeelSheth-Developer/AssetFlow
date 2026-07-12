@@ -11,7 +11,7 @@ interface Notification {
   createdAt: string;
 }
 
-const API = "https://assetflow-production-85d2.up.railway.app/api";
+const API = process.env.NEXT_PUBLIC_API_BASE || "https://assetflow-production-85d2.up.railway.app/api";
 
 interface NotificationState {
   notifications: Notification[];
@@ -23,7 +23,7 @@ interface NotificationState {
   dismiss: (id: string) => void;
 }
 
-export const useNotificationStore = create<NotificationState>((set, get) => ({
+export const useNotificationStore = create<NotificationState>((set) => ({
   notifications: [],
   unreadCount: 0,
   loading: false,

@@ -122,6 +122,7 @@ export const NAV_ITEMS = [
   { label: "Organization", href: "/organization", icon: "Building2" },
   { label: "Assets", href: "/assets", icon: "Package" },
   { label: "Allocations", href: "/allocations", icon: "ArrowLeftRight" },
+  { label: "Transfers", href: "/transfers", icon: "Repeat2" },
   { label: "Bookings", href: "/bookings", icon: "Calendar" },
   { label: "Maintenance", href: "/maintenance", icon: "Wrench" },
   { label: "Audits", href: "/audits", icon: "ClipboardCheck" },
