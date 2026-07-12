@@ -2,6 +2,10 @@
 
 A full-stack **Asset Management System** for organizations — track assets across locations, allocate them to employees, handle transfers between departments, book shared resources, run maintenance workflows, and audit inventory — all with role-based access control.
 
+🔗 **Live Demo:** [https://asset-flow-dun.vercel.app/](https://asset-flow-dun.vercel.app/)
+
+🎥 **Demo Video:** [Watch on Google Drive](https://drive.google.com/file/d/1GhXxHqK-uD-rNudpoKTfZ8A0sikThaaI/view?usp=sharing)
+
 ## 💡 What is AssetFlow?
 
 Every organization owns things — laptops, projectors, vehicles, meeting rooms, tools — and usually tracks them in spreadsheets that go stale the moment someone changes desks. AssetFlow replaces that with a single system of record:
