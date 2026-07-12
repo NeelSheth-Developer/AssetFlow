@@ -1915,11 +1915,22 @@ Base: `/api/reports` — **ADMIN, ASSET_MANAGER, DEPT_HEAD** only (Dept Heads se
 
 ## 18. Notifications API
 
-Base: `/api/notifications` — auth required. Everything is scoped to **the logged-in user only**.
+Base: `/api/notifications` — auth required.
+
+**Feed visibility (`GET /`) is role-scoped:**
+
+| Role            | Sees                                                                        |
+|-----------------|------------------------------------------------------------------------------|
+| `ADMIN`         | **All** notifications (org-wide)                                             |
+| `ASSET_MANAGER` | Asset-related notifications org-wide (`ALLOCATION`, `RETURN`, `TRANSFER`, `MAINTENANCE`) **plus** their own of any type |
+| `DEPT_HEAD`     | Notifications of every user in **their department**                          |
+| `EMPLOYEE`      | Only **their own**                                                           |
+
+Write actions (`mark-read`, `mark-all-read`, `DELETE`) and preferences remain **owner-only** — they only ever affect the logged-in user's own notifications.
 
 | # | Method | Endpoint          | Description                                       |
 |---|--------|-------------------|---------------------------------------------------|
-| 1 | GET    | `/`               | Own feed (`?unread=true` to filter), max 100      |
+| 1 | GET    | `/`               | Role-scoped feed (`?unread=true` to filter), max 100 |
 | 2 | GET    | `/preferences`    | Own notification preferences (with defaults)      |
 | 3 | PATCH  | `/preferences`    | Upsert own preferences (merge)                    |
 | 4 | POST   | `/mark-all-read`  | Mark all as read                                  |
@@ -1944,13 +1955,17 @@ Base: `/api/notifications` — auth required. Everything is scoped to **the logg
         "entity_type": "ALLOCATION",
         "entity_id": "uuid",
         "read": false,
-        "created_at": "2026-07-12T09:00:00.000Z"
+        "created_at": "2026-07-12T09:00:00.000Z",
+        "recipient": { "id": "uuid", "name": "Priya Shah" },
+        "isMine": false
       }
     ],
     "unreadCount": 3
   }
 }
 ```
+
+`recipient` identifies whose notification each row is (relevant for Admin / Asset Manager / Dept Head feeds); `isMine` is `true` when it belongs to the caller. `unreadCount` counts unread rows **within the caller's scope**.
 
 ### 18.2 GET `/api/notifications/preferences`
 
