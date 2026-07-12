@@ -15,7 +15,17 @@ assetsRouter.use(requireAuth);
 const STATUSES = ['AVAILABLE', 'ALLOCATED', 'UNDER_MAINTENANCE', 'RETIRED', 'DISPOSED', 'LOST'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE } });
+// Only PNG/JPEG images and PDF documents are accepted; anything else is rejected.
+const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'application/pdf']);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME.has(file.mimetype)) return cb(null, true);
+    cb(new Error('Only PNG, JPEG or PDF files are allowed'));
+  },
+});
 
 interface AssetRow {
   id: string;
@@ -308,11 +318,11 @@ assetsRouter.post('/:id/documents', requireRole('ADMIN', 'ASSET_MANAGER'), (req,
     const asset = await query<{ tag: string }>('SELECT tag FROM assets WHERE id = $1', [id]);
     if (!asset.rowCount) return fail(res, 404, 'Asset not found');
 
-    const uploaded = await uploadAssetDocument(req.file.buffer, id);
+    const uploaded = await uploadAssetDocument(req.file.buffer, id, req.file.originalname, req.file.mimetype);
     const saved = await query(
       `INSERT INTO asset_documents (asset_id, url, filename, mime, bytes, uploaded_by)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, url, filename, mime, bytes, created_at`,
-      [id, uploaded.secure_url, req.file.originalname, req.file.mimetype, req.file.size, req.user!.userId],
+      [id, uploaded.secure_url, req.file.originalname, req.file.mimetype, uploaded.bytes ?? req.file.size, req.user!.userId],
     );
     logActivity(req.user!.userId, 'ASSET', 'ASSET', id, `Uploaded document to ${asset.rows[0].tag}`);
     return ok(res, 201, 'Document uploaded', { document: saved.rows[0] });

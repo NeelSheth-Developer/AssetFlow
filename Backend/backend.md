@@ -1676,7 +1676,7 @@ List/detail **scoped**. Writes: **Admin / Asset Manager**.
 
 **Access:** Admin / Asset Manager
 
-**Request:** `multipart/form-data` — field `file` — the document.
+**Request:** `multipart/form-data` — field `file` — the document. Accepts **PNG, JPEG, or PDF only** (max 10 MB); any other type → `400 Only PNG, JPEG or PDF files are allowed`. Images are stored **compressed** (`quality: auto:good`, capped at 2000px) via Cloudinary; PDFs are stored as-is (`raw`) with their `.pdf` extension preserved.
 
 **Response `201` — `data`:**
 
