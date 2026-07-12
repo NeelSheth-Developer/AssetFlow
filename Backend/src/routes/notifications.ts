@@ -3,6 +3,7 @@ import { query } from '../db/neon.js';
 import { ok, fail } from '../lib/respond.js';
 import { isUuid } from '../lib/validate.js';
 import { requireAuth } from '../middleware/auth.js';
+import { log } from 'node:console';
 
 // Screen 10. Feed visibility: Admin → all, Asset Manager → asset-related
 // (ALLOCATION/RETURN/TRANSFER/MAINTENANCE) + own, Dept Head → their department,
@@ -14,31 +15,19 @@ const ASSET_TYPES = ['ALLOCATION', 'RETURN', 'TRANSFER', 'MAINTENANCE'];
 
 // Returns a WHERE fragment over notifications n JOIN users u (the recipient),
 // pushing bind values onto params. '' means org-wide (Admin).
-function scopeFeed(req: Request, params: unknown[]): string {
-  const user = req.user!;
-  if (user.role === 'ADMIN') return '';
-  if (user.role === 'ASSET_MANAGER') {
-    params.push(ASSET_TYPES, user.userId);
-    return `(n.type = ANY($${params.length - 1}::text[]) OR n.user_id = $${params.length})`;
-  }
-  if (user.role === 'DEPT_HEAD' && user.departmentId) {
-    params.push(user.departmentId);
-    return `u.department_id = $${params.length}`;
-  }
-  params.push(user.userId);
-  return `n.user_id = $${params.length}`;
-}
 
 // GET /api/notifications — role-scoped feed (?unread=true to filter).
 notificationsRouter.get('/', async (req, res, next) => {
   try {
     const unreadOnly = String(req.query.unread ?? '') === 'true';
-    const params: unknown[] = [];
-    const filters: string[] = [];
-    const scope = scopeFeed(req, params);
-    if (scope) filters.push(scope);
-    if (unreadOnly) filters.push('n.read = FALSE');
-    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const params: unknown[] = [req.user!.userId];
+    const filters = ['n.user_id = $1'];
+
+    if (unreadOnly) {
+      filters.push('n.read = FALSE');
+    }
+
+    const where = `WHERE ${filters.join(' AND ')}`;
 
     const rows = await query(
       `SELECT n.id, n.type, n.title, n.message, n.entity_type, n.entity_id, n.read, n.created_at,
@@ -48,12 +37,12 @@ notificationsRouter.get('/', async (req, res, next) => {
       params,
     );
 
-    const unreadParams: unknown[] = [];
-    const unreadScope = scopeFeed(req, unreadParams);
     const unread = await query<{ count: string }>(
-      `SELECT COUNT(*) AS count FROM notifications n JOIN users u ON u.id = n.user_id
-       WHERE ${unreadScope ? unreadScope + ' AND ' : ''} n.read = FALSE`,
-      unreadParams,
+      `SELECT COUNT(*) AS count
+      FROM notifications
+      WHERE user_id = $1
+      AND read = FALSE`,
+      [req.user!.userId],
     );
 
     return ok(res, 200, 'Notifications fetched', {
