@@ -3,12 +3,43 @@ import { query } from '../db/neon.js';
 import { ok, fail } from '../lib/respond.js';
 import { isUuid } from '../lib/validate.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { logActivity } from '../lib/activity.js';
 import type { Role } from '../lib/tokens.js';
 
 // Screen 3, Tab C — Employee Directory. The ONLY place users.role is ever
-// written by a request (spec §5). Every route: Admin only.
+// written by a request (spec §5). Everything below is Admin-only except
+// PATCH /me/profile, which any authenticated user can call on themselves.
 export const usersRouter = Router();
-usersRouter.use(requireAuth, requireRole('ADMIN'));
+usersRouter.use(requireAuth);
+
+// PATCH /api/users/me/profile — update own name / designation (never role).
+usersRouter.patch('/me/profile', async (req, res, next) => {
+  try {
+    const sets: string[] = [];
+    const params: unknown[] = [req.user!.userId];
+    if (req.body.name !== undefined) {
+      const name = String(req.body.name).trim();
+      if (name.length < 2 || name.length > 100) return fail(res, 400, 'Name must be 2–100 characters');
+      params.push(name);
+      sets.push(`name = $${params.length}`);
+    }
+    if (req.body.designation !== undefined) {
+      params.push(String(req.body.designation).trim() || null);
+      sets.push(`designation = $${params.length}`);
+    }
+    if (!sets.length) return fail(res, 400, 'Nothing to update');
+    sets.push('updated_at = now()');
+    const updated = await query<{ id: string; name: string; designation: string | null }>(
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $1 RETURNING id, name, designation`,
+      params,
+    );
+    return ok(res, 200, 'Profile updated', { user: updated.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+usersRouter.use(requireRole('ADMIN'));
 
 const ROLE_LABELS: Record<string, string> = {
   EMPLOYEE: 'Employee',
@@ -89,6 +120,49 @@ usersRouter.get('/', async (req, res, next) => {
   }
 });
 
+// GET /api/users/:id/assets — assets currently held by a user (directory slide-out).
+usersRouter.get('/:id/assets', async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return fail(res, 404, 'User not found');
+    const rows = await query(
+      `SELECT a.id, a.tag, a.name, a.status, al.allocated_at, al.expected_return_date
+       FROM allocations al JOIN assets a ON a.id = al.asset_id
+       WHERE al.holder_id = $1 AND al.status IN ('ACTIVE','RETURN_REQUESTED')
+       ORDER BY al.allocated_at DESC`,
+      [req.params.id],
+    );
+    return ok(res, 200, 'User assets fetched', {
+      assets: rows.rows.map((a) => ({
+        id: a.id, tag: a.tag, name: a.name, status: a.status,
+        allocatedAt: a.allocated_at, expectedReturnDate: a.expected_return_date,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/users/:id/activity — recent activity by a user (directory slide-out).
+usersRouter.get('/:id/activity', async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return fail(res, 404, 'User not found');
+    const limit = Math.min(20, Math.max(1, Number(req.query.limit) || 5));
+    const rows = await query(
+      `SELECT id, action_type, entity_type, description, created_at
+       FROM activity_logs WHERE actor_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [req.params.id, limit],
+    );
+    return ok(res, 200, 'User activity fetched', {
+      activities: rows.rows.map((a) => ({
+        id: a.id, actionType: a.action_type, entityType: a.entity_type,
+        description: a.description, createdAt: a.created_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // 5.2 PATCH /api/users/:id/role — the promotion feature. ADMIN is never accepted.
 usersRouter.patch('/:id/role', async (req, res, next) => {
   try {
@@ -115,6 +189,7 @@ usersRouter.patch('/:id/role', async (req, res, next) => {
     const user = updated.rows[0];
 
     req.log.info({ adminId: req.user!.userId, userId: id, role }, 'Role updated');
+    logActivity(req.user!.userId, 'USER_CHANGE', 'USER', id, `Changed ${user.name}'s role to ${ROLE_LABELS[role]}`);
     return ok(res, 200, `Role updated to ${ROLE_LABELS[role]}`, {
       user: { id: user.id, name: user.name, role: user.role, departmentId: user.department_id },
     });
@@ -187,6 +262,8 @@ usersRouter.patch('/:id/status', async (req, res, next) => {
     }
 
     req.log.info({ adminId: req.user!.userId, userId: id, status }, 'User status updated');
+    logActivity(req.user!.userId, 'USER_CHANGE', 'USER', id,
+      status === 'INACTIVE' ? 'Deactivated a user account' : 'Reactivated a user account');
     return ok(res, 200, status === 'INACTIVE' ? 'User deactivated' : 'User activated', {
       user: { id: updated.rows[0].id, status: updated.rows[0].status },
     });
