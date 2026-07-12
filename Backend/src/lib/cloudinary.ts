@@ -1,6 +1,6 @@
 /**
- * Cloudinary integration — the only file that talks to Cloudinary.
- * Images are uploaded into a per-user folder: users/<userId>.
+ * Cloudinary integration — used for asset document/photo uploads (Screen 4).
+ * Files land in a per-asset folder: assets/<assetId>.
  */
 import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
 import { config } from '../config.js';
@@ -20,20 +20,14 @@ function ensureConfigured(): void {
 export const isCloudinaryConfigured = (): boolean =>
   Boolean(config.cloudinary.cloudName && config.cloudinary.apiKey && config.cloudinary.apiSecret);
 
-/** Upload an in-memory image buffer into the user's folder. */
-export function uploadImageBuffer(buffer: Buffer, userId: string): Promise<UploadApiResponse> {
+/** Upload an in-memory file buffer into the asset's folder. */
+export function uploadAssetDocument(buffer: Buffer, assetId: string): Promise<UploadApiResponse> {
   ensureConfigured();
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: `users/${userId}`, resource_type: 'image' },
+      { folder: `assets/${assetId}`, resource_type: 'auto' },
       (error, result) => (error || !result ? reject(error ?? new Error('Empty upload result')) : resolve(result)),
     );
     stream.end(buffer);
   });
-}
-
-/** Delivery URL with f_auto (best format for the browser) + q_auto (smart compression). */
-export function optimizedUrl(publicId: string): string {
-  ensureConfigured();
-  return cloudinary.url(publicId, { fetch_format: 'auto', quality: 'auto', secure: true });
 }
