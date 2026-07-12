@@ -756,7 +756,22 @@ Base: `/api/categories` — auth required. **Reads: any user. Writes: Admin only
 
 ## 9. Locations API
 
-Base: `/api/locations` — auth required.
+Base: `/api/locations` — auth required. **Reads: any user. Writes: ADMIN / ASSET_MANAGER.**
+
+Locations form a three-level cascade: **building → floor → room**. Deleting a building cascades to its floors and rooms; deleting a floor cascades to its rooms. Assets referencing a deleted room keep their free-text `location` label but their `roomId` becomes `null` (FK `SET NULL`).
+
+| # | Method | Endpoint                                  | Role         | Description                     |
+|---|--------|-------------------------------------------|--------------|---------------------------------|
+| 1 | GET    | `/`                                       | Any          | Full nested cascade             |
+| 2 | POST   | `/`                                       | ADMIN, AM    | Add a building                  |
+| 3 | PATCH  | `/:id`                                    | ADMIN, AM    | Rename building / city          |
+| 4 | DELETE | `/:id`                                    | ADMIN, AM    | Delete building (cascades)      |
+| 5 | POST   | `/:id/floors`                             | ADMIN, AM    | Add a floor                     |
+| 6 | PATCH  | `/:id/floors/:floorId`                    | ADMIN, AM    | Rename a floor                  |
+| 7 | DELETE | `/:id/floors/:floorId`                    | ADMIN, AM    | Delete floor (cascades)         |
+| 8 | POST   | `/:id/floors/:floorId/rooms`              | ADMIN, AM    | Add a room                      |
+| 9 | PATCH  | `/:id/floors/:floorId/rooms/:roomId`      | ADMIN, AM    | Rename a room                   |
+| 10| DELETE | `/:id/floors/:floorId/rooms/:roomId`      | ADMIN, AM    | Delete room (assets' `roomId` → null) |
 
 ### 9.1 GET `/api/locations`
 
@@ -786,6 +801,91 @@ Returns the full **building → floor → room** cascade.
   }
 }
 ```
+
+### 9.2 POST `/api/locations`
+
+**Request body:**
+
+```json
+{ "building": "Skyline Hub", "city": "Pune" }
+```
+
+| Field      | Type   | Rules                          |
+|------------|--------|--------------------------------|
+| `building` | string | Required, 2–100 characters     |
+| `city`     | string | Optional                       |
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Building added",
+  "data": { "location": { "id": "uuid", "building": "Skyline Hub", "city": "Pune", "floors": [] } }
+}
+```
+
+### 9.3 PATCH `/api/locations/:id`
+
+**Request body** (any subset): `{ "building": "Skyline Hub West", "city": "Pune" }`
+
+**Response `200`:** `{ "location": { "id", "building", "city" } }` · **Errors:** `400` `"Nothing to update"`, `404`.
+
+### 9.4 DELETE `/api/locations/:id`
+
+**Response `200`:** `"Location deleted"` — floors and rooms are deleted with it. · **Errors:** `404`.
+
+### 9.5 POST `/api/locations/:id/floors`
+
+**Request body:** `{ "name": "Floor 3" }` (required, max 100 chars)
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Floor added",
+  "data": { "floor": { "id": "uuid", "name": "Floor 3", "locationId": "uuid", "rooms": [] } }
+}
+```
+
+**Errors:** `400` missing name, `404` location not found.
+
+### 9.6 PATCH `/api/locations/:id/floors/:floorId`
+
+**Request body:** `{ "name": "3rd Floor" }`
+
+**Response `200`:** `{ "floor": { "id", "name" } }` · **Errors:** `400`, `404` (floor must belong to the building).
+
+### 9.7 DELETE `/api/locations/:id/floors/:floorId`
+
+**Response `200`:** `"Floor deleted"` — its rooms are deleted with it. · **Errors:** `404`.
+
+### 9.8 POST `/api/locations/:id/floors/:floorId/rooms`
+
+**Request body:** `{ "name": "Room 301" }` (required, max 100 chars)
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Room added",
+  "data": { "room": { "id": "uuid", "name": "Room 301", "floorId": "uuid" } }
+}
+```
+
+**Errors:** `400` missing name, `404` floor not found (must belong to the building).
+
+### 9.9 PATCH `/api/locations/:id/floors/:floorId/rooms/:roomId`
+
+**Request body:** `{ "name": "Room 301-A" }`
+
+**Response `200`:** `{ "room": { "id", "name" } }` · **Errors:** `400`, `404` (full chain building → floor → room is validated).
+
+### 9.10 DELETE `/api/locations/:id/floors/:floorId/rooms/:roomId`
+
+**Response `200`:** `"Room deleted"` — assets pointing at it keep their text `location` but `roomId` becomes `null`. · **Errors:** `404`.
 
 ---
 
