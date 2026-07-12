@@ -33,9 +33,8 @@ export function Topbar() {
   }, []);
 
   const currentPage =
-    NAV_ITEMS.find((item) =>
-      item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
-    )?.label ?? "Dashboard";
+    NAV_ITEMS.find((item) => pathname.startsWith(item.href))
+      ?.label ?? "Dashboard";
 
   const initials = user?.name
     ?.split(" ")
