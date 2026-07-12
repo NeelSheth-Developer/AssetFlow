@@ -121,9 +121,9 @@ let transporter: Transporter | undefined;
 function getTransporter(): Transporter {
   if (!transporter) {
     transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+      host: config.mail.host,
+      port: config.mail.port,
+      secure: config.mail.port === 465,
       auth: { user: config.mail.user, pass: config.mail.pass },
       connectionTimeout: 10_000,
       greetingTimeout: 10_000,
@@ -144,7 +144,7 @@ export async function sendPasswordResetEmail(email: string, code: string): Promi
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       await getTransporter().sendMail({
-        from: `${config.appName} <${config.mail.user}>`,
+        from: `${config.appName} <${config.mail.from}>`,
         to: email,
         subject: resetSubject,
         text: buildResetText(code),
@@ -169,7 +169,7 @@ export async function sendSignupWelcomeEmail(email: string): Promise<void> {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       await getTransporter().sendMail({
-        from: `${config.appName} <${config.mail.user}>`,
+        from: `${config.appName} <${config.mail.from}>`,
         to: email,
         subject: signupSubject,
         text: `Welcome to ${config.appName}! Your account has been created successfully.`,
