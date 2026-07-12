@@ -64,10 +64,9 @@ Verify: `curl http://localhost:3000/health` → reports DB connectivity and late
 | `CLIENT_URL` | | Frontend origin(s) for CORS with credentials; comma-separate several (default `http://localhost:5173`) |
 | `PORT` / `NODE_ENV` | | Default `3000` / `development` |
 | `APP_NAME` | | Name used in emails (default `AssetFlow`) |
-| `MAIL_USER` / `MAIL_PASS` | | Gmail address + **App Password** (needs 2FA) — primary OTP sender, delivers to any address |
-| `RESEND_API_KEY` / `EMAIL_FROM` | | Resend fallback sender |
+| `MAIL_USER` / `MAIL_PASS` | ✅ for emails | Gmail address + **App Password** (needs 2FA on the Google account) — the only email sender, delivers to any address |
 
-At least one email provider (Gmail SMTP or Resend) must be configured for forgot-password to work.
+Forgot-password emails require `MAIL_USER`/`MAIL_PASS`. Create the App Password at myaccount.google.com/apppasswords.
 
 ## 3. Scripts
 
@@ -94,7 +93,7 @@ src/
     tokens.ts            access JWT sign/verify · opaque refresh token
     cookies.ts           at/rt HttpOnly cookie options (Secure+None in prod, Lax in dev)
     crypto.ts            6-digit OTP · SHA-256 token hashing
-    email.ts             Nodemailer (Gmail SMTP) with Resend fallback
+    email.ts             Nodemailer (Gmail SMTP) — branded HTML reset-code email
     respond.ts           the { success, message, data } envelope
     validate.ts          email/UUID validators
     logger.ts            pino (pretty in dev, JSON in prod)
@@ -211,7 +210,7 @@ Rehydrates `AuthContext` on app load. Reads role/department **fresh from the DB*
 { "email": "raj@example.com" }
 ```
 
-Emails a 6-digit code (10-minute expiry) via Gmail SMTP, falling back to Resend. Returns the same generic `200` whether or not the email exists (anti-enumeration):
+Emails a 6-digit code (10-minute expiry) via Gmail SMTP (Nodemailer). Returns the same generic `200` whether or not the email exists (anti-enumeration):
 `"If that email is registered, a reset code has been sent."`
 **Errors:** `429 Please wait 60 seconds before requesting another code.`
 

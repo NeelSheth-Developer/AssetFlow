@@ -22,8 +22,4 @@ export const config = {
     user: process.env.MAIL_USER ?? process.env.GMAIL_USER,
     pass: (process.env.MAIL_PASS ?? process.env.GMAIL_APP_PASSWORD)?.replace(/\s+/g, ''),
   },
-  resend: {
-    apiKey: process.env.RESEND_API_KEY,
-    from: process.env.EMAIL_FROM,
-  },
 } as const;
