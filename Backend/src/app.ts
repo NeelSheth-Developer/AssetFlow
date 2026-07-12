@@ -10,6 +10,17 @@ import { authRouter } from './routes/auth.js';
 import { usersRouter } from './routes/users.js';
 import { departmentsRouter } from './routes/departments.js';
 import { categoriesRouter } from './routes/categories.js';
+import { assetsRouter } from './routes/assets.js';
+import { locationsRouter } from './routes/locations.js';
+import { allocationsRouter } from './routes/allocations.js';
+import { transfersRouter } from './routes/transfers.js';
+import { resourcesRouter, bookingsRouter } from './routes/bookings.js';
+import { maintenanceRouter } from './routes/maintenance.js';
+import { auditsRouter } from './routes/audits.js';
+import { dashboardRouter } from './routes/dashboard.js';
+import { reportsRouter } from './routes/reports.js';
+import { notificationsRouter } from './routes/notifications.js';
+import { activityLogsRouter } from './routes/activity-logs.js';
 import { sanitize } from './middleware/sanitize.js';
 import { logger } from './lib/logger.js';
 
@@ -47,6 +58,18 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/categories', categoriesRouter);
+app.use('/api/assets', assetsRouter);
+app.use('/api/locations', locationsRouter);
+app.use('/api/allocations', allocationsRouter);
+app.use('/api/transfers', transfersRouter);
+app.use('/api/resources', resourcesRouter);
+app.use('/api/bookings', bookingsRouter);
+app.use('/api/maintenance', maintenanceRouter);
+app.use('/api/audit-cycles', auditsRouter);
+app.use('/api/dashboard', dashboardRouter);
+app.use('/api/reports', reportsRouter);
+app.use('/api/notifications', notificationsRouter);
+app.use('/api/activity-logs', activityLogsRouter);
 
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found', data: null }));
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {

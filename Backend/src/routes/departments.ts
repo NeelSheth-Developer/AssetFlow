@@ -18,6 +18,7 @@ interface DeptRow {
   status: string;
   created_at: string;
   employee_count: string;
+  asset_count: string;
 }
 
 const publicDept = (d: DeptRow) => ({
@@ -27,11 +28,13 @@ const publicDept = (d: DeptRow) => ({
   parentId: d.parent_id,
   status: d.status,
   employeeCount: Number(d.employee_count),
+  assetCount: Number(d.asset_count),
 });
 
 const DEPT_SELECT = `
   SELECT dep.id, dep.name, dep.head_id, h.name AS head_name, dep.parent_id, dep.status, dep.created_at,
-         (SELECT COUNT(*) FROM users u WHERE u.department_id = dep.id) AS employee_count
+         (SELECT COUNT(*) FROM users u WHERE u.department_id = dep.id) AS employee_count,
+         (SELECT COUNT(*) FROM assets a WHERE a.department_id = dep.id) AS asset_count
   FROM departments dep LEFT JOIN users h ON h.id = dep.head_id`;
 
 // GET /api/departments — list (any authenticated user).
@@ -51,6 +54,45 @@ departmentsRouter.get('/:id', async (req, res, next) => {
     const result = await query<DeptRow>(`${DEPT_SELECT} WHERE dep.id = $1`, [req.params.id]);
     if (!result.rowCount) return fail(res, 404, 'Department not found');
     return ok(res, 200, 'Department fetched', { department: publicDept(result.rows[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/departments/:id/employees — members of a department (Screen 3 Tab A).
+departmentsRouter.get('/:id/employees', async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return fail(res, 404, 'Department not found');
+    const dept = await query('SELECT 1 FROM departments WHERE id = $1', [req.params.id]);
+    if (!dept.rowCount) return fail(res, 404, 'Department not found');
+    const rows = await query(
+      `SELECT id, name, email, role, status, created_at FROM users
+       WHERE department_id = $1 ORDER BY name`,
+      [req.params.id],
+    );
+    return ok(res, 200, 'Department employees fetched', {
+      employees: rows.rows.map((u) => ({
+        id: u.id, name: u.name, email: u.email, role: u.role, status: u.status, createdAt: u.created_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/departments/:id/assets — assets owned by a department.
+departmentsRouter.get('/:id/assets', async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return fail(res, 404, 'Department not found');
+    const dept = await query('SELECT 1 FROM departments WHERE id = $1', [req.params.id]);
+    if (!dept.rowCount) return fail(res, 404, 'Department not found');
+    const rows = await query(
+      `SELECT a.id, a.tag, a.name, a.status, a.condition, a.location, c.name AS category
+       FROM assets a LEFT JOIN categories c ON c.id = a.category_id
+       WHERE a.department_id = $1 ORDER BY a.tag`,
+      [req.params.id],
+    );
+    return ok(res, 200, 'Department assets fetched', { assets: rows.rows });
   } catch (error) {
     next(error);
   }
