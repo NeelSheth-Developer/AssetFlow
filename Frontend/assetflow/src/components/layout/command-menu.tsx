@@ -4,7 +4,7 @@ import { useEffect, useCallback, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   LayoutDashboard, Building2, Package, ArrowLeftRight, Repeat2,
-  Calendar, Wrench, ClipboardCheck, BarChart3, Activity, Plus, Users,
+  Calendar, Wrench, ClipboardCheck, BarChart3, Activity, Plus,
 } from "lucide-react";
 import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem,

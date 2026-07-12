@@ -16,7 +16,6 @@ export default function SettingsPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const fetchMe = useAuthStore((s) => s.fetchMe);
 
   // Change password state
   const [currentPassword, setCurrentPassword] = useState("");
