@@ -19,8 +19,9 @@ export const config = {
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL ?? '15m',
   refreshTokenTtlDays: Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 7),
   mail: {
-    user: process.env.MAIL_USER ?? process.env.GMAIL_USER,
-    pass: (process.env.MAIL_PASS ?? process.env.GMAIL_APP_PASSWORD)?.replace(/\s+/g, ''),
+    brevoApiKey: process.env.BREVO_API_KEY,
+    senderEmail: process.env.BREVO_SENDER_EMAIL ?? process.env.MAIL_USER,
+    senderName: process.env.BREVO_SENDER_NAME ?? process.env.APP_NAME ?? 'AssetFlow',
   },
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME,
