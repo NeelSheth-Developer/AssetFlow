@@ -1,0 +1,10 @@
+# Backend lives on the dev-backend branch — keep the local working copy
+# out of frontend branches' change lists.
+Backend/
+
+# Dependencies & build output (safety net for any package)
+node_modules/
+.next/
+.env
+.env.local
+.DS_Store
