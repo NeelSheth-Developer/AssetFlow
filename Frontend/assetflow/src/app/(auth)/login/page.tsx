@@ -123,13 +123,12 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="w-full max-w-[1100px] grid grid-cols-1 lg:grid-cols-5 rounded-[2rem] overflow-hidden shadow-[0_30px_100px_-20px_rgba(99,102,241,0.15),0_10px_40px_-10px_rgba(0,0,0,0.07)] border border-white/60 backdrop-blur-xl bg-white/40"
-      >
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+      className="w-full max-w-[1100px] grid grid-cols-1 lg:grid-cols-5 rounded-[2rem] overflow-hidden shadow-[0_30px_100px_-20px_rgba(99,102,241,0.15),0_10px_40px_-10px_rgba(0,0,0,0.07)] border border-white/60 backdrop-blur-xl bg-white/40"
+    >
         {/* Left Side - Project Info (3 cols) */}
         <div className="hidden lg:flex lg:col-span-3 flex-col justify-between p-10 relative overflow-hidden bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600">
           {/* Animated decorative circles */}
@@ -498,6 +497,5 @@ export default function LoginPage() {
           </motion.p>
         </div>
       </motion.div>
-    </div>
   );
 }

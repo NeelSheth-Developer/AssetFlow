@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
-import { CommandMenu } from "@/components/layout/command-menu";
 import { useAuthStore } from "@/stores/auth-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -61,15 +60,13 @@ export default function DashboardLayout({
       </div>
 
       <main
-        className={`min-h-screen transition-all duration-200 ${
+        className={`min-h-screen transition-all duration-200 bg-gradient-to-br from-slate-50/80 via-sky-50/30 to-indigo-50/20 ${
           sidebarCollapsed ? "lg:ml-[64px]" : "lg:ml-[260px]"
         }`}
       >
         <Topbar />
         <div className="p-6">{children}</div>
       </main>
-
-      <CommandMenu />
     </>
   );
 }

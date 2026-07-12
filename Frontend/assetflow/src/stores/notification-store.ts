@@ -11,7 +11,7 @@ interface Notification {
   createdAt: string;
 }
 
-const API = "https://assetflow-production-85d2.up.railway.app/api";
+const API = process.env.NEXT_PUBLIC_API_BASE || "https://assetflow-production-85d2.up.railway.app/api";
 
 interface NotificationState {
   notifications: Notification[];

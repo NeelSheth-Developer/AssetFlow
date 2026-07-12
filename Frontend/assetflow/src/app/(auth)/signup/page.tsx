@@ -141,8 +141,7 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-br from-slate-50 via-white to-violet-50/30">
-      <motion.div
+    <>      <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
@@ -506,6 +505,6 @@ export default function SignupPage() {
           </motion.p>
         </div>
       </motion.div>
-    </div>
+    </>
   );
 }

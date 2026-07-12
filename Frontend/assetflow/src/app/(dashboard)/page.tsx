@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/auth-store";
 import { motion } from "framer-motion";
-import { Package, Calendar, Wrench, AlertCircle } from "lucide-react";
+import { Package, Calendar, Wrench, AlertCircle, TrendingUp, ArrowUpRight, Clock, RotateCcw } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -24,44 +24,62 @@ const kpiCards = [
   {
     label: "Assets Available",
     key: "assetsAvailable" as const,
-    accent: "bg-green-500",
-    trend: "↑ 8%",
-    trendColor: "text-green-600",
+    icon: Package,
+    gradient: "from-emerald-500 to-green-500",
+    bgLight: "bg-emerald-50",
+    iconColor: "text-emerald-600",
+    trend: "+8%",
+    trendLabel: "vs last week",
   },
   {
     label: "Assets Allocated",
     key: "assetsAllocated" as const,
-    accent: "bg-blue-500",
-    trend: "↑ 3%",
-    trendColor: "text-blue-600",
+    icon: ArrowUpRight,
+    gradient: "from-blue-500 to-indigo-500",
+    bgLight: "bg-blue-50",
+    iconColor: "text-blue-600",
+    trend: "+3%",
+    trendLabel: "vs last week",
   },
   {
     label: "Under Maintenance",
     key: "underMaintenance" as const,
-    accent: "bg-orange-500",
+    icon: Wrench,
+    gradient: "from-amber-500 to-orange-500",
+    bgLight: "bg-amber-50",
+    iconColor: "text-amber-600",
     trend: null,
-    trendColor: "",
+    trendLabel: "",
   },
   {
     label: "Active Bookings",
     key: "activeBookings" as const,
-    accent: "bg-indigo-500",
+    icon: Calendar,
+    gradient: "from-indigo-500 to-violet-500",
+    bgLight: "bg-indigo-50",
+    iconColor: "text-indigo-600",
     trend: null,
-    trendColor: "",
+    trendLabel: "",
   },
   {
     label: "Pending Transfers",
     key: "pendingTransfers" as const,
-    accent: "bg-amber-500",
+    icon: RotateCcw,
+    gradient: "from-purple-500 to-fuchsia-500",
+    bgLight: "bg-purple-50",
+    iconColor: "text-purple-600",
     trend: null,
-    trendColor: "",
+    trendLabel: "",
   },
   {
     label: "Upcoming Returns",
     key: "upcomingReturns" as const,
-    accent: "bg-red-500",
-    trend: "⚠ Action needed",
-    trendColor: "text-red-600",
+    icon: Clock,
+    gradient: "from-rose-500 to-red-500",
+    bgLight: "bg-rose-50",
+    iconColor: "text-rose-600",
+    trend: "Action needed",
+    trendLabel: "",
   },
 ];
 
@@ -116,13 +134,13 @@ const containerVariants = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
-    transition: { staggerChildren: 0.06 },
+    transition: { staggerChildren: 0.08 },
   },
 };
 
 const itemVariants = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -152,25 +170,21 @@ export default function DashboardPage() {
 
         let anySuccess = false;
 
-        // KPIs
         if (kpisRes.status === "fulfilled" && kpisRes.value.success) {
           setKpis(kpisRes.value.data);
           anySuccess = true;
         }
 
-        // Activity Feed
         if (activityRes.status === "fulfilled" && activityRes.value.success) {
           setActivityLog(activityRes.value.data.activities || []);
           anySuccess = true;
         }
 
-        // Utilization Chart
         if (chartRes.status === "fulfilled" && chartRes.value.success) {
           setUtilizationData(chartRes.value.data.dataPoints || []);
           anySuccess = true;
         }
 
-        // Upcoming Returns
         if (returnsRes.status === "fulfilled" && returnsRes.value.success) {
           setUpcomingReturns(returnsRes.value.data.returns || []);
           anySuccess = true;
@@ -191,15 +205,15 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="h-8 w-64 bg-muted animate-pulse rounded" />
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        <div className="h-8 w-64 bg-slate-100 animate-pulse rounded-lg" />
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-24 bg-muted animate-pulse rounded-xl" />
+            <div key={i} className="h-[130px] bg-white/80 animate-pulse rounded-2xl border border-slate-100" />
           ))}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-          <div className="lg:col-span-3 h-64 bg-muted animate-pulse rounded-xl" />
-          <div className="lg:col-span-2 h-64 bg-muted animate-pulse rounded-xl" />
+          <div className="lg:col-span-3 h-72 bg-white/80 animate-pulse rounded-2xl border border-slate-100" />
+          <div className="lg:col-span-2 h-72 bg-white/80 animate-pulse rounded-2xl border border-slate-100" />
         </div>
       </div>
     );
@@ -209,15 +223,17 @@ export default function DashboardPage() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center space-y-4">
-        <AlertCircle className="h-12 w-12 text-muted-foreground" />
-        <h2 className="text-lg font-semibold">Unable to load data</h2>
-        <p className="text-sm text-muted-foreground max-w-sm">
-          We couldn't fetch dashboard data from the server. Please check your
+        <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center">
+          <AlertCircle className="h-8 w-8 text-red-400" />
+        </div>
+        <h2 className="text-lg font-semibold text-slate-800">Unable to load data</h2>
+        <p className="text-sm text-slate-500 max-w-sm">
+          We couldn&apos;t fetch dashboard data from the server. Please check your
           connection and try again.
         </p>
         <button
           onClick={() => window.location.reload()}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+          className="px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-violet-500 text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-indigo-200/50 transition-all"
         >
           Retry
         </button>
@@ -228,151 +244,189 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* ─── Greeting Row ─────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+      >
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
             {getGreeting()}, {user?.name?.split(" ")[0] ?? "there"} 👋
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-sm text-slate-500 mt-0.5">
             {format(new Date(), "EEEE, MMMM d, yyyy")}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Link
-            href="/allocations"
-            className="glass-light rounded-full px-4 py-2 text-sm font-medium flex items-center gap-2 hover:scale-[1.02] transition-transform"
-          >
-            <Package className="h-4 w-4" />
-            Allocate
-          </Link>
-          <Link
-            href="/bookings"
-            className="glass-light rounded-full px-4 py-2 text-sm font-medium flex items-center gap-2 hover:scale-[1.02] transition-transform"
-          >
-            <Calendar className="h-4 w-4" />
-            Book
-          </Link>
-          <Link
-            href="/maintenance"
-            className="glass-light rounded-full px-4 py-2 text-sm font-medium flex items-center gap-2 hover:scale-[1.02] transition-transform"
-          >
-            <Wrench className="h-4 w-4" />
-            Maintenance
-          </Link>
+          {[
+            { href: "/allocations", icon: Package, label: "Allocate" },
+            { href: "/bookings", icon: Calendar, label: "Book" },
+            { href: "/maintenance", icon: Wrench, label: "Maintenance" },
+          ].map((action) => (
+            <Link
+              key={action.href}
+              href={action.href}
+              className="bg-white rounded-xl px-4 py-2.5 text-sm font-medium flex items-center gap-2 border border-slate-200/80 shadow-sm hover:shadow-md hover:border-indigo-200 hover:-translate-y-0.5 transition-all duration-200"
+            >
+              <action.icon className="h-4 w-4 text-indigo-500" />
+              {action.label}
+            </Link>
+          ))}
         </div>
-      </div>
+      </motion.div>
 
       {/* ─── KPI Row ─────────────────────────────────────── */}
       <motion.div
         variants={containerVariants}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3"
+        className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4"
       >
-        {kpiCards.map((kpi) => (
-          <motion.div
-            key={kpi.key}
-            variants={itemVariants}
-            className="glass-light rounded-xl p-5 flex gap-3"
-          >
-            {/* Accent bar */}
-            <div className={cn("w-[3px] rounded-full shrink-0", kpi.accent)} />
+        {kpiCards.map((kpi) => {
+          const Icon = kpi.icon;
+          return (
+            <motion.div
+              key={kpi.key}
+              variants={itemVariants}
+              whileHover={{ y: -3, transition: { duration: 0.2 } }}
+              className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 relative overflow-hidden group"
+            >
+              {/* Subtle gradient overlay on hover */}
+              <div className={cn("absolute inset-0 opacity-0 group-hover:opacity-[0.03] transition-opacity bg-gradient-to-br", kpi.gradient)} />
 
-            <div className="min-w-0">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground truncate">
-                {kpi.label}
-              </p>
-              <p className="text-2xl font-bold mt-1 flex items-center gap-2">
-                {kpis?.[kpi.key] ?? 0}
-                {/* Pulsing dot for upcoming returns with overdue items */}
-                {kpi.key === "upcomingReturns" &&
-                  (kpis?.upcomingReturns || 0) > 0 && (
-                    <span className="relative flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
-                    </span>
-                  )}
-              </p>
-              {kpi.trend && (
-                <p className={cn("text-xs mt-0.5", kpi.trendColor)}>
-                  {kpi.trend}
+              <div className="relative z-10">
+                {/* Icon */}
+                <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center mb-3", kpi.bgLight)}>
+                  <Icon className={cn("size-4", kpi.iconColor)} />
+                </div>
+
+                {/* Value */}
+                <p className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  {kpis?.[kpi.key] ?? 0}
+                  {kpi.key === "upcomingReturns" &&
+                    (kpis?.upcomingReturns || 0) > 0 && (
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+                      </span>
+                    )}
                 </p>
-              )}
-            </div>
-          </motion.div>
-        ))}
+
+                {/* Label */}
+                <p className="text-xs text-slate-500 mt-1 font-medium">
+                  {kpi.label}
+                </p>
+
+                {/* Trend */}
+                {kpi.trend && (
+                  <div className="flex items-center gap-1 mt-2">
+                    <span className={cn(
+                      "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
+                      kpi.key === "upcomingReturns" 
+                        ? "bg-rose-50 text-rose-600" 
+                        : "bg-emerald-50 text-emerald-600"
+                    )}>
+                      {kpi.trend}
+                    </span>
+                    {kpi.trendLabel && (
+                      <span className="text-[10px] text-slate-400">{kpi.trendLabel}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          );
+        })}
       </motion.div>
 
       {/* ─── Main Content Grid ───────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mt-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mt-2">
         {/* Left — Recent Activity (col-span-3) */}
-        <div className="lg:col-span-3 space-y-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.5 }}
+          className="lg:col-span-3 space-y-4"
+        >
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Recent Activity</h2>
+            <h2 className="text-lg font-bold text-slate-800">Recent Activity</h2>
             <Link
               href="/activity"
-              className="text-sm text-primary hover:underline"
+              className="text-sm text-indigo-600 hover:text-indigo-700 font-medium transition-colors"
             >
               View all →
             </Link>
           </div>
 
-          <div className="bg-card rounded-xl border p-5">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
             {!activityLog || activityLog.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
+              <p className="text-sm text-slate-400 text-center py-8">
                 No recent activity
               </p>
             ) : (
-              activityLog.map((log: any, idx: number) => (
-                <div
-                  key={log.id || idx}
-                  className="flex items-center gap-3 py-3 border-b border-border/30 last:border-0"
-                >
-                  {/* Color dot based on activity type */}
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full shrink-0",
-                      activityTypeColor[log.actionType || log.type] ?? "bg-slate-400"
-                    )}
-                  />
+              <div className="space-y-0.5">
+                {activityLog.map((log: any, idx: number) => (
+                  <div
+                    key={log.id || idx}
+                    className="flex items-center gap-3 py-3 px-2 rounded-xl hover:bg-slate-50/80 transition-colors border-b border-slate-50 last:border-0"
+                  >
+                    {/* Color dot */}
+                    <span
+                      className={cn(
+                        "h-2 w-2 rounded-full shrink-0",
+                        activityTypeColor[log.actionType || log.type] ?? "bg-slate-400"
+                      )}
+                    />
 
-                  {/* Avatar */}
-                  <span className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium shrink-0">
-                    {log.actor?.name ? getInitials(log.actor.name) : "?"}
-                  </span>
+                    {/* Avatar */}
+                    <span className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-100 to-violet-100 flex items-center justify-center text-[10px] font-semibold text-indigo-700 shrink-0">
+                      {log.actor?.name ? getInitials(log.actor.name) : "?"}
+                    </span>
 
-                  {/* Description */}
-                  <p className="text-sm truncate">
-                    <span className="font-medium">
-                      {log.actor?.name || "System"}
-                    </span>{" "}
-                    {log.description || ""}
-                  </p>
+                    {/* Description */}
+                    <p className="text-sm text-slate-600 truncate flex-1">
+                      <span className="font-semibold text-slate-800">
+                        {log.actor?.name || "System"}
+                      </span>{" "}
+                      {log.description || ""}
+                    </p>
 
-                  {/* Relative time */}
-                  <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap shrink-0">
-                    {log.createdAt ? timeAgo(log.createdAt) : ""}
-                  </span>
-                </div>
-              ))
+                    {/* Time */}
+                    <span className="text-xs text-slate-400 ml-auto whitespace-nowrap shrink-0 font-medium">
+                      {log.createdAt ? timeAgo(log.createdAt) : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-        </div>
+        </motion.div>
 
         {/* Right — Widgets (col-span-2) */}
-        <div className="lg:col-span-2 space-y-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4, duration: 0.5 }}
+          className="lg:col-span-2 space-y-6"
+        >
           {/* Widget 1: Asset Utilization Chart */}
-          <div className="bg-card rounded-xl border p-5">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold">Asset Utilization</h3>
-              <span className="text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center">
+                  <TrendingUp className="size-3.5 text-indigo-500" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-800">Asset Utilization</h3>
+              </div>
+              <span className="text-[11px] text-slate-400 font-medium bg-slate-50 px-2 py-1 rounded-full">
                 Last 30 days
               </span>
             </div>
 
             {!utilizationData || utilizationData.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-12">
+              <p className="text-sm text-slate-400 text-center py-12">
                 No data available
               </p>
             ) : (
@@ -392,19 +446,19 @@ export default function DashboardPage() {
                       >
                         <stop
                           offset="0%"
-                          stopColor="hsl(238, 84%, 60%)"
-                          stopOpacity={0.2}
+                          stopColor="#6366f1"
+                          stopOpacity={0.15}
                         />
                         <stop
                           offset="100%"
-                          stopColor="hsl(238, 84%, 60%)"
+                          stopColor="#6366f1"
                           stopOpacity={0}
                         />
                       </linearGradient>
                     </defs>
                     <XAxis
                       dataKey="date"
-                      tick={{ fontSize: 10 }}
+                      tick={{ fontSize: 10, fill: "#94a3b8" }}
                       tickLine={false}
                       axisLine={false}
                       tickFormatter={(v: string) => {
@@ -417,18 +471,21 @@ export default function DashboardPage() {
                       interval="preserveStartEnd"
                     />
                     <YAxis
-                      tick={{ fontSize: 10 }}
+                      tick={{ fontSize: 10, fill: "#94a3b8" }}
                       tickLine={false}
                       axisLine={false}
                       domain={[0, 100]}
                       tickFormatter={(v: number) => `${v}%`}
                     />
                     <Tooltip
+                      cursor={{ stroke: "rgba(99,102,241,0.1)", strokeWidth: 1 }}
                       contentStyle={{
                         fontSize: 12,
-                        borderRadius: 8,
-                        border: "1px solid hsl(220, 13%, 91%)",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                        borderRadius: 12,
+                        border: "none",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+                        background: "white",
+                        padding: "8px 12px",
                       }}
                       labelFormatter={(v) => {
                         try {
@@ -442,7 +499,7 @@ export default function DashboardPage() {
                     <Area
                       type="monotone"
                       dataKey="utilization"
-                      stroke="hsl(238, 84%, 60%)"
+                      stroke="#6366f1"
                       strokeWidth={2}
                       fill="url(#utilizationGradient)"
                     />
@@ -453,11 +510,16 @@ export default function DashboardPage() {
           </div>
 
           {/* Widget 2: Upcoming Returns */}
-          <div className="bg-card rounded-xl border p-5">
-            <h3 className="text-sm font-semibold mb-4">Upcoming Returns</h3>
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center">
+                <Clock className="size-3.5 text-rose-500" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-800">Upcoming Returns</h3>
+            </div>
 
             {!upcomingReturns || upcomingReturns.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
+              <p className="text-sm text-slate-400 text-center py-6">
                 No upcoming returns
               </p>
             ) : (
@@ -465,39 +527,39 @@ export default function DashboardPage() {
                 {upcomingReturns.map((item: any, idx: number) => (
                   <div
                     key={item.allocationId || item.id || idx}
-                    className="flex items-center justify-between gap-3"
+                    className="flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-slate-50/80 transition-colors"
                   >
                     <div className="min-w-0">
                       <p
                         className={cn(
-                          "text-sm font-medium truncate",
-                          item.status === "OVERDUE" && "text-red-600"
+                          "text-sm font-semibold truncate",
+                          item.status === "OVERDUE" ? "text-rose-600" : "text-slate-700"
                         )}
                       >
                         {item.asset?.name || "Unknown Asset"}
                         {item.asset?.tag && (
-                          <span className="text-xs text-muted-foreground ml-1">
+                          <span className="text-xs text-slate-400 ml-1 font-normal">
                             ({item.asset.tag})
                           </span>
                         )}
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">
+                      <p className="text-xs text-slate-400 truncate mt-0.5">
                         {item.holder?.name || "Unknown"}
                       </p>
                     </div>
 
                     {item.status === "OVERDUE" ? (
-                      <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 text-xs rounded-full px-2 py-0.5 whitespace-nowrap font-medium">
+                      <span className="bg-rose-50 text-rose-600 text-[10px] rounded-full px-2.5 py-1 whitespace-nowrap font-semibold">
                         {item.daysOverdue
                           ? `${item.daysOverdue}d overdue`
                           : "Overdue"}
                       </span>
                     ) : (
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      <span className="text-xs text-slate-400 whitespace-nowrap font-medium">
                         {item.expectedReturnDate
                           ? format(
                               new Date(item.expectedReturnDate),
-                              "MMM d, yyyy"
+                              "MMM d"
                             )
                           : "—"}
                       </span>
@@ -507,7 +569,7 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        </div>
+        </motion.div>
       </div>
     </div>
   );
