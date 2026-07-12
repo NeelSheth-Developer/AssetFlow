@@ -36,12 +36,13 @@ Authentication & RBAC API for AssetFlow.
 14. [Demo credentials](#14-demo-credentials)
 15. [The 60-second RBAC demo](#15-the-60-second-rbac-demo)
 16. [Frontend integration notes](#16-frontend-integration-notes)
-17. [Module APIs — Screens 2–10](#17-module-apis--screens-210)
-    · [Dashboard](#171-dashboard-apidashboard) · [Assets](#172-assets-apiassets) · [Locations](#173-locations-apilocations)
-    · [Allocations](#174-allocations-apiallocations) · [Transfers](#175-transfers-apitransfers)
-    · [Booking & Resources](#176-booking--resources-apibookings--apiresources) · [Maintenance](#177-maintenance-apimaintenance)
-    · [Audit](#178-audit-apiaudit-cycles) · [Reports](#179-reports-apireports)
-    · [Notifications](#1710-notifications-apinotifications) · [Activity logs](#1711-activity-logs-apiactivity-logs)
+17. [API reference — all endpoints](#17-api-reference--all-endpoints)
+    · [Auth](#171-auth-apiauth) · [Users](#172-users-apiusers) · [Departments](#173-departments-apidepartments)
+    · [Categories](#174-categories-apicategories) · [Assets](#175-assets-apiassets) · [Locations](#176-locations-apilocations)
+    · [Allocations](#177-allocations-apiallocations) · [Transfers](#178-transfers-apitransfers)
+    · [Resources](#179-resources-bookable-apiresources) · [Bookings](#1710-bookings-apibookings) · [Maintenance](#1711-maintenance-apimaintenance)
+    · [Audit Cycles](#1712-audit-cycles-apiaudit-cycles) · [Dashboard](#1713-dashboard-apidashboard) · [Reports](#1714-reports-apireports)
+    · [Notifications](#1715-notifications-apinotifications) · [Activity Logs](#1716-activity-logs-apiactivity-logs) · [Health](#1717-health-health)
 
 ---
 
@@ -404,12 +405,12 @@ Implemented today (`requireAuth` on every row; `—` = any authenticated user):
 
 Seeded by `npm run db:seed`:
 
-| Role | Email | Password |
-|---|---|---|
-| Admin | `admin@assetflow.com` | `Admin@123` |
-| Asset Manager | `manager@assetflow.com` | `Manager@123` |
-| Department Head | `head@assetflow.com` | `Head@123` |
-| Employee | `employee@assetflow.com` | `Employee@123` |
+| Role | Name | Email | Password |
+|---|---|---|---|
+| Admin | System Admin | `admin@assetflow.com` | `Admin@123` |
+| Asset Manager | Asset Manager | `manager@assetflow.com` | `Manager@123` |
+| Department Head | Department Head | `head@assetflow.com` | `Head@123` |
+| Employee | Employee | `employee@assetflow.com` | `Employee@123` |
 
 The Department Head and Employee are pre-assigned to **Engineering**. Reviewers can also sign up themselves — new accounts become Employees, and the Admin can promote them.
 
@@ -434,113 +435,3608 @@ Backend already ships `cors({ origin: CLIENT_URL, credentials: true })` — with
 
 **Conditional UI is UX, not security** — hide unavailable actions, but every restriction is independently enforced by the middleware in §11.
 
-## 17. Module APIs — Screens 2–10
+## 17. API reference — all endpoints
 
-All module routes use the §5 envelope, §6 cookie auth, and §11 guards. "Scoped" = Employee sees own records, Dept Head their department's, Admin/Asset Manager everything. Every state-changing action writes an `activity_logs` row, and workflow decisions create `notifications` for the affected user.
+Complete request/response reference for **all 110 endpoints**. Every response is wrapped in the [§5 envelope](#5-response-envelope) `{ success, message, data }` — the tables below show the **`data`** object only. Auth is the [§6 cookie](#6-where-the-tokens-live) session; **Access** names the required role and *(scoped)* means Employee → own, Dept Head → dept, Admin/AM → all. Path params use `:id`; list values like `uuid` / `ISO` denote types, not literals. Arrays show one representative element.
 
-### 17.1 Dashboard (`/api/dashboard`)
+### 17.1 Auth (`/api/auth`)
 
-| Route | Method | Returns |
+Login/Signup set HttpOnly `at` (15 min) + `rt` (7 day) cookies; every other call reads them automatically.
+
+| Method | Path | Access |
 |---|---|---|
-| `/kpis` | GET | `assetsAvailable, assetsAllocated, underMaintenance, maintenanceOpen, activeBookings, pendingTransfers, upcomingReturns` (7-day window) |
-| `/overdue` | GET | `overdueReturns[]` with `daysOverdue` |
-| `/activity-feed?limit=10` | GET | Recent `activities[]` (type, description, actor, createdAt) |
-| `/utilization-chart?days=30` | GET | `dataPoints[]` — % of assets allocated per day, computed from allocation history |
-| `/upcoming-returns?limit=5` | GET | Next returns with `ON_TIME` / `OVERDUE` status |
-| `/health-score` | GET | `score` 0–100 + `breakdown` (availableRatio, maintenanceBacklog, auditCompliance, overdueRate) |
+| `POST` | `/signup` | Public |
+| `POST` | `/login` | Public |
+| `POST` | `/refresh` | Public (rt cookie) |
+| `POST` | `/logout` | Public |
+| `GET` | `/me` | Authenticated |
+| `POST` | `/forgot-password` | Public |
+| `POST` | `/reset-password` | Public |
+| `POST` | `/change-password` | Authenticated |
 
-### 17.2 Assets (`/api/assets`)
+<details><summary><code>POST /api/auth/signup</code> — Register (always EMPLOYEE) and log in.</summary>
 
-- `GET /` — paginated; filters `q, categoryId, departmentId, status, page, limit`. Scoped.
-- `GET /search?q=` — quick lookup by tag / serial / name (⌘K, QR scan target).
-- `GET /:id` — full detail: category, department, current holder, custom values, documents. 403 outside your scope.
-- `POST /` (Admin/AM) — register; `tag` auto-generates (`AF-000N`) if omitted; `customValues` object validated against the category's custom fields client-side.
-- `PATCH /:id` (Admin/AM) — partial update, including `status`.
-- `GET /:id/history` — allocation + maintenance timelines.
-- `POST /:id/documents` (Admin/AM) — multipart `file` field → Cloudinary folder `assets/<id>` (10 MB cap).
-- `GET /:id/qr` — `{ qrUrl }` PNG data-URL encoding `{ app, assetId, tag }`.
-- `POST /:id/retire` — requires status `AVAILABLE`; body `{ reason, retirementDate }` → 400 `Asset must be Available to retire`.
-- `POST /:id/dispose` — requires `RETIRED`; body `{ method, notes, disposalDate }` → 400 `Asset must be Retired before disposal`.
-- `POST /:id/mark-lost` — flags `LOST` outside an audit.
-- `POST /bulk-delete` (Admin) — `{ ids: [] }`.
+**Access:** Public
 
-### 17.3 Locations (`/api/locations`)
+**Request body**
 
-`GET /` — nested `locations[] → floors[] → rooms[]` cascade for the registration form.
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane@gmail.com",
+  "password": "Str0ng!Pass"
+}
+```
 
-### 17.4 Allocations (`/api/allocations`)
+**Response `201` — `data`:**
 
-- `GET /` — scoped; filters `assetId, employeeId, departmentId, status`.
-- `GET /kanban` — grouped columns `PENDING / ACTIVE / RETURN_REQUESTED / OVERDUE` (overdue derived from `expected_return_date`).
-- `GET /overdue` — with `daysOverdue`.
-- `GET /:id` — detail incl. condition notes once returned.
-- `POST /` (Admin/AM) — `{ assetId, employeeId, purpose, expectedReturnDate }`; asset must be `AVAILABLE`; sets it `ALLOCATED`; notifies the holder.
-- `POST /:id/approve` (AM / Dept Head of holder's dept) — PENDING → ACTIVE.
-- `POST /:id/return` (holder only) — `{ condition, notes }` → `RETURN_REQUESTED`.
-- `POST /:id/return/approve` (Admin/AM) — checks in; asset back to `AVAILABLE`; notifies the holder.
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Jane Doe",
+    "email": "jane@gmail.com",
+    "role": "EMPLOYEE",
+    "departmentId": "uuid|null",
+    "status": "ACTIVE"
+  }
+}
+```
 
-### 17.5 Transfers (`/api/transfers`)
+</details>
 
-- `GET /` — scoped (employees see either side of their own transfers); filter `status`.
-- `GET /:id` — detail.
-- `POST /` — `{ assetId, toUserId, reason }`; asset must be `ALLOCATED`; one open request per asset (409 otherwise).
-- `POST /:id/approve` (AM / Dept Head of target's dept) — closes the old allocation, opens one for the new holder, notifies both sides.
-- `POST /:id/reject` — `{ reason }`, notifies the requester.
+<details><summary><code>POST /api/auth/login</code> — Log in; sets auth cookies.</summary>
 
-### 17.6 Booking & Resources (`/api/bookings` · `/api/resources`)
+**Access:** Public
 
-Time inputs accept `{ start, end }` (ISO) **or** `{ date, startTime, endTime }` (`"2026-07-14"`, `"09:30"`).
+**Request body**
 
-- `GET /api/resources` — bookable assets (`is_bookable = true`).
-- `GET /api/resources/:id/calendar?from=&to=` — confirmed bookings in a window.
-- `GET /api/resources/:id/availability?date=` — hourly 09:00–18:00 slot grid with `available` flags.
-- `GET /api/bookings` — scoped; filters `resourceId, status (UPCOMING/ONGOING/COMPLETED/CANCELLED — derived), date`.
-- `GET /api/bookings/my` — the caller's bookings.
-- `GET /api/bookings/:id` — owner, their Dept Head, or Admin/AM.
-- `POST /api/bookings` — overlap-checked → 409 `Requested slot conflicts with an existing booking`.
-- `POST /api/bookings/check-availability` — `{ available: true }` or conflict + up to 3 alternative free resources.
-- `POST /api/bookings/recurring` — `{ resourceId, frequency: DAILY|WEEKLY, startDate, endDate, startTime, endTime }` → creates the series, skips and reports conflicting dates (60-slot cap).
-- `POST /api/bookings/:id/cancel` · `/:id/reschedule` — owner or Dept Head of the booker's dept; reschedule re-runs the overlap check.
+```json
+{
+  "email": "jane@gmail.com",
+  "password": "Str0ng!Pass"
+}
+```
 
-### 17.7 Maintenance (`/api/maintenance`)
+**Response `200` — `data`:**
 
-Pipeline: `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → RESOLVED` (+ `REJECTED`, `ESCALATED`).
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Jane Doe",
+    "email": "jane@gmail.com",
+    "role": "EMPLOYEE",
+    "departmentId": "uuid|null",
+    "status": "ACTIVE"
+  }
+}
+```
 
-- `GET /` — scoped; employees also see requests where they are the assigned technician; filters `status, priority, assetId`.
-- `GET /:id` — detail + `commentCount`.
-- `POST /` — `{ assetId, issue, issueType?, priority? }`.
-- `POST /:id/approve` (AM) — asset → `UNDER_MAINTENANCE`. `/:id/reject` (AM) — `{ reason }`.
-- `POST /:id/assign` (AM) — `{ technicianId }` (a user) or `{ technicianName }` (external).
-- `POST /:id/start` — assigned technician only (400 unless `TECHNICIAN_ASSIGNED`).
-- `POST /:id/resolve` — technician or AM; `{ notes, cost }`; asset returns to `AVAILABLE` (or `ALLOCATED` if still held).
-- `POST /:id/escalate` (AM) — `{ reason, escalateTo }` → status `ESCALATED`, priority `CRITICAL`.
-- `GET /:id/comments` · `POST /:id/comments` — `{ text }` thread on the request.
+</details>
 
-### 17.8 Audit (`/api/audit-cycles`)
+<details><summary><code>POST /api/auth/refresh</code> — Rotate refresh token, mint new access token.</summary>
 
-Auditor is an **assignment** (`audit_cycle_auditors`), not a role — marking items requires being assigned to that cycle (Admin bypasses).
+**Access:** Public (rt cookie)
 
-- `GET /` — Dept Heads see org-wide cycles plus ones covering their dept; filter `status`.
-- `POST /` (Admin) — `{ name, departmentIds?, startDate?, endDate? }`; snapshots a checklist item for every asset in scope.
-- `GET /:id` — detail + stats + auditors + departments.
-- `POST /:id/auditors` (Admin) — `{ userIds: [] }`; notifies each auditor.
-- `GET /:id/items?status=&q=` — checklist with per-status counts.
-- `PATCH /:id/items/:itemId` — `{ verification, notes?, photoUrl? }`.
-- `PATCH /:id/items/bulk-update` — `{ itemIds: [], verification, notes? }`.
-- `GET /:id/progress` — totals, `completionPercent`, per-auditor completed counts.
-- `GET /:id/discrepancy-report` — derived read over `DISCREPANCY`/`MISSING` rows.
-- `GET /:id/summary` — historical stats (for closed cycles).
-- `POST /:id/close` (Admin) — locks the cycle; assets on `MISSING` items are auto-marked `LOST`.
+**Request:** no body.
 
-### 17.9 Reports (`/api/reports`)
+**Response `200` — `data`:**
 
-Admin / Asset Manager / Dept Head (dept-scoped). Six endpoints:
-`/utilization` (most used + idle assets), `/maintenance-frequency` (by category), `/due-for-maintenance` (≥2 repairs or >4 years old), `/allocation-summary` (by department), `/booking-heatmap` (peak hour × resource), and `/export?type=<report>&format=csv` — CSV download (the §5 envelope doesn't apply to file streams).
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Jane Doe",
+    "role": "EMPLOYEE",
+    "departmentId": "uuid|null"
+  }
+}
+```
 
-### 17.10 Notifications (`/api/notifications`)
+</details>
 
-All scoped to the logged-in user: `GET /` (`?unread=true`, returns `unreadCount`), `PATCH /:id/read`, `POST /mark-all-read`, `DELETE /:id` (dismiss), `GET /preferences` / `PATCH /preferences` (JSONB merged over defaults: allocation, transfer, maintenance, booking, audit, email).
+<details><summary><code>POST /api/auth/logout</code> — Revoke rt and clear cookies.</summary>
 
-### 17.11 Activity logs (`/api/activity-logs`)
+**Access:** Public
 
-Admin only. `GET /` — paginated; filters `actionType, userId, entityType, from, to`. `GET /export?format=csv` — up to 5 000 rows, `Content-Disposition: attachment`.
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+<details><summary><code>GET /api/auth/me</code> — Current user, role/department read fresh from DB.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Jane Doe",
+    "email": "jane@gmail.com",
+    "role": "EMPLOYEE",
+    "departmentId": "uuid|null",
+    "status": "ACTIVE",
+    "department": {
+      "id": "uuid",
+      "name": "Engineering"
+    }
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/auth/forgot-password</code> — Email a 6-digit OTP (generic 200, rate-limited 1/60s).</summary>
+
+**Access:** Public
+
+**Request body**
+
+```json
+{
+  "email": "jane@gmail.com"
+}
+```
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+<details><summary><code>POST /api/auth/reset-password</code> — Consume OTP + set new password (revokes all sessions).</summary>
+
+**Access:** Public
+
+**Request body**
+
+```json
+{
+  "email": "jane@gmail.com",
+  "otp": "123456",
+  "newPassword": "N3w!Password"
+}
+```
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+<details><summary><code>POST /api/auth/change-password</code> — Change password; other sessions revoked.</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "currentPassword": "Str0ng!Pass",
+  "newPassword": "N3w!Password"
+}
+```
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+### 17.2 Users (`/api/users`)
+
+`PATCH /me/profile` is self-service; everything else is **Admin only**.
+
+| Method | Path | Access |
+|---|---|---|
+| `PATCH` | `/me/profile` | Authenticated |
+| `GET` | `/` | Admin |
+| `GET` | `/:id/assets` | Admin |
+| `GET` | `/:id/activity` | Admin |
+| `PATCH` | `/:id/role` | Admin |
+| `PATCH` | `/:id/department` | Admin |
+| `PATCH` | `/:id/status` | Admin |
+
+<details><summary><code>PATCH /api/users/me/profile</code> — Update own name / designation (never role).</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "name": "Jane D.",
+  "designation": "Senior Analyst"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Jane D.",
+    "designation": "Senior Analyst"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/users/</code> — Paginated directory.</summary>
+
+**Access:** Admin
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `page` | no | default 1 |
+| `limit` | no | default 20, max 100 |
+| `q` | no | search name/email |
+| `role` | no | ADMIN|ASSET_MANAGER|DEPT_HEAD|EMPLOYEE |
+| `departmentId` | no | filter |
+| `status` | no | ACTIVE|INACTIVE |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "users": [
+    {
+      "id": "uuid",
+      "name": "Jane Doe",
+      "email": "jane@gmail.com",
+      "role": "EMPLOYEE",
+      "department": {
+        "id": "uuid",
+        "name": "Engineering"
+      },
+      "status": "ACTIVE",
+      "createdAt": "ISO"
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "limit": 20
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/users/:id/assets</code> — Assets currently held by a user.</summary>
+
+**Access:** Admin
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "assets": [
+    {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop",
+      "status": "ALLOCATED",
+      "allocatedAt": "ISO",
+      "expectedReturnDate": "ISO|null"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/users/:id/activity</code> — Recent activity by a user.</summary>
+
+**Access:** Admin
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `limit` | no | default 5, max 20 |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "activities": [
+    {
+      "id": "uuid",
+      "actionType": "ALLOCATION",
+      "entityType": "ASSET",
+      "description": "\u2026",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/users/:id/role</code> — Promote/demote (ADMIN never accepted).</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "role": "ASSET_MANAGER"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "name": "Jane Doe",
+    "role": "ASSET_MANAGER",
+    "departmentId": "uuid|null"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/users/:id/department</code> — Assign/unassign department.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "departmentId": "uuid|null"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "departmentId": "uuid|null",
+    "department": {
+      "id": "uuid",
+      "name": "Engineering"
+    }
+  }
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/users/:id/status</code> — Activate/deactivate (deactivate revokes tokens).</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "status": "INACTIVE"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "status": "INACTIVE"
+  }
+}
+```
+
+</details>
+
+### 17.3 Departments (`/api/departments`)
+
+Reads: any authenticated user. Writes: **Admin only**.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated |
+| `GET` | `/:id` | Authenticated |
+| `GET` | `/:id/employees` | Authenticated |
+| `GET` | `/:id/assets` | Authenticated |
+| `POST` | `/` | Admin |
+| `PATCH` | `/:id` | Admin |
+| `DELETE` | `/:id` | Admin |
+
+<details><summary><code>GET /api/departments/</code> — List all with counts.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "departments": [
+    {
+      "id": "uuid",
+      "name": "Engineering",
+      "head": {
+        "id": "uuid",
+        "name": "Head"
+      },
+      "parentId": "uuid|null",
+      "status": "ACTIVE",
+      "employeeCount": 12,
+      "assetCount": 34
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/departments/:id</code> — Single department.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "department": {
+    "id": "uuid",
+    "name": "Engineering",
+    "head": {
+      "id": "uuid",
+      "name": "Head"
+    },
+    "parentId": "uuid|null",
+    "status": "ACTIVE",
+    "employeeCount": 12,
+    "assetCount": 34
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/departments/:id/employees</code> — Members.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "employees": [
+    {
+      "id": "uuid",
+      "name": "Jane",
+      "email": "jane@x.com",
+      "role": "EMPLOYEE",
+      "status": "ACTIVE",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/departments/:id/assets</code> — Assets owned by dept.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "assets": [
+    {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop",
+      "status": "AVAILABLE",
+      "condition": "GOOD",
+      "location": "HQ",
+      "category": "Electronics"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/departments/</code> — Create department.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "name": "Engineering",
+  "headId": "uuid|null",
+  "parentId": "uuid|null"
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "department": {
+    "id": "uuid",
+    "name": "Engineering",
+    "head": {
+      "id": "uuid",
+      "name": "Head"
+    },
+    "parentId": "uuid|null",
+    "status": "ACTIVE",
+    "employeeCount": 12,
+    "assetCount": 34
+  }
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/departments/:id</code> — Partial update.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "name": "R&D",
+  "headId": "uuid|null",
+  "parentId": "uuid|null",
+  "status": "ACTIVE"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "department": {
+    "id": "uuid",
+    "name": "Engineering",
+    "head": {
+      "id": "uuid",
+      "name": "Head"
+    },
+    "parentId": "uuid|null",
+    "status": "ACTIVE",
+    "employeeCount": 12,
+    "assetCount": 34
+  }
+}
+```
+
+</details>
+
+<details><summary><code>DELETE /api/departments/:id</code> — Delete (users' dept → null; 409 if it has children).</summary>
+
+**Access:** Admin
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+### 17.4 Categories (`/api/categories`)
+
+Reads: any authenticated user. Writes: **Admin only**.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated |
+| `GET` | `/tree` | Authenticated |
+| `GET` | `/:id` | Authenticated |
+| `POST` | `/:id/custom-fields` | Admin |
+| `DELETE` | `/:id/custom-fields/:fieldId` | Admin |
+| `POST` | `/` | Admin |
+| `PATCH` | `/:id` | Admin |
+| `DELETE` | `/:id` | Admin |
+
+<details><summary><code>GET /api/categories/</code> — Flat list.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "categories": [
+    {
+      "id": "uuid",
+      "name": "Laptops",
+      "customFields": [
+        {
+          "id": "uuid",
+          "label": "\u2026",
+          "key": "\u2026",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "status": "ACTIVE",
+      "parentId": "uuid|null",
+      "icon": "laptop",
+      "assetCount": 8
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/categories/tree</code> — Hierarchical view.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "tree": [
+    {
+      "id": "uuid",
+      "name": "Laptops",
+      "customFields": [
+        {
+          "id": "uuid",
+          "label": "\u2026",
+          "key": "\u2026",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "status": "ACTIVE",
+      "parentId": "uuid|null",
+      "icon": "laptop",
+      "assetCount": 8,
+      "children": []
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/categories/:id</code> — Single category.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "category": {
+    "id": "uuid",
+    "name": "Laptops",
+    "customFields": [
+      {
+        "id": "uuid",
+        "label": "\u2026",
+        "key": "\u2026",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "status": "ACTIVE",
+    "parentId": "uuid|null",
+    "icon": "laptop",
+    "assetCount": 8
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/categories/:id/custom-fields</code> — Append a custom field (type: text|number|date|select).</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "label": "Warranty Expiry",
+  "key": "warrantyExpiry",
+  "type": "date",
+  "required": false,
+  "options": []
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "field": {
+    "id": "uuid",
+    "label": "Warranty Expiry",
+    "key": "warrantyExpiry",
+    "type": "date",
+    "required": false
+  }
+}
+```
+
+</details>
+
+<details><summary><code>DELETE /api/categories/:id/custom-fields/:fieldId</code> — Remove a custom field.</summary>
+
+**Access:** Admin
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+<details><summary><code>POST /api/categories/</code> — Create category.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "name": "Laptops",
+  "customFields": [],
+  "parentId": "uuid|null",
+  "icon": "laptop"
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "category": {
+    "id": "uuid",
+    "name": "Laptops",
+    "customFields": [
+      {
+        "id": "uuid",
+        "label": "\u2026",
+        "key": "\u2026",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "status": "ACTIVE",
+    "parentId": "uuid|null",
+    "icon": "laptop",
+    "assetCount": 8
+  }
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/categories/:id</code> — Partial update.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "name": "Ultrabooks",
+  "customFields": [],
+  "status": "ACTIVE",
+  "parentId": "uuid|null",
+  "icon": "laptop"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "category": {
+    "id": "uuid",
+    "name": "Laptops",
+    "customFields": [
+      {
+        "id": "uuid",
+        "label": "\u2026",
+        "key": "\u2026",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "status": "ACTIVE",
+    "parentId": "uuid|null",
+    "icon": "laptop",
+    "assetCount": 8
+  }
+}
+```
+
+</details>
+
+<details><summary><code>DELETE /api/categories/:id</code> — Delete category.</summary>
+
+**Access:** Admin
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+### 17.5 Assets (`/api/assets`)
+
+List/detail **scoped**. Writes: **Admin / Asset Manager**.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated (scoped) |
+| `GET` | `/search` | Authenticated (scoped) |
+| `POST` | `/bulk-delete` | Admin |
+| `POST` | `/` | Admin / Asset Manager |
+| `GET` | `/:id` | Authenticated (scoped) |
+| `PATCH` | `/:id` | Admin / Asset Manager |
+| `GET` | `/:id/history` | Authenticated |
+| `POST` | `/:id/documents` | Admin / Asset Manager |
+| `GET` | `/:id/qr` | Authenticated |
+| `POST` | `/:id/retire` | Admin / Asset Manager |
+| `POST` | `/:id/dispose` | Admin / Asset Manager |
+| `POST` | `/:id/mark-lost` | Admin / Asset Manager |
+
+<details><summary><code>GET /api/assets/</code> — Paginated list.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `page` | no | default 1 |
+| `limit` | no | default 20, max 100 |
+| `q` | no | search name/tag/serial |
+| `categoryId` | no |  |
+| `departmentId` | no |  |
+| `status` | no | AVAILABLE|ALLOCATED|UNDER_MAINTENANCE|RETIRED|DISPOSED|LOST |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "assets": [
+    {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Dell Latitude",
+      "serialNo": "SN-123",
+      "category": {
+        "id": "uuid",
+        "name": "Electronics"
+      },
+      "department": {
+        "id": "uuid",
+        "name": "Engineering"
+      },
+      "status": "AVAILABLE",
+      "condition": "GOOD",
+      "location": "HQ / Floor 2",
+      "roomId": "uuid|null",
+      "isBookable": false,
+      "purchaseDate": "2026-01-15",
+      "purchaseCost": 1499.0,
+      "customValues": {},
+      "retirement": null,
+      "disposal": null,
+      "currentHolder": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "createdAt": "ISO"
+    }
+  ],
+  "total": 120,
+  "page": 1,
+  "limit": 20
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/assets/search</code> — Quick lookup (max 20).</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `q` | yes | search term |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "assets": [
+    {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Dell Latitude",
+      "serialNo": "SN-123",
+      "category": {
+        "id": "uuid",
+        "name": "Electronics"
+      },
+      "department": {
+        "id": "uuid",
+        "name": "Engineering"
+      },
+      "status": "AVAILABLE",
+      "condition": "GOOD",
+      "location": "HQ / Floor 2",
+      "roomId": "uuid|null",
+      "isBookable": false,
+      "purchaseDate": "2026-01-15",
+      "purchaseCost": 1499.0,
+      "customValues": {},
+      "retirement": null,
+      "disposal": null,
+      "currentHolder": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/assets/bulk-delete</code> — Delete many.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "ids": [
+    "uuid",
+    "uuid"
+  ]
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "deletedCount": 2
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/assets/</code> — Register (tag auto-generates if empty).</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "tag": "",
+  "name": "Dell Latitude 7440",
+  "serialNo": "SN-123",
+  "categoryId": "uuid",
+  "departmentId": "uuid",
+  "condition": "GOOD",
+  "location": "HQ / Floor 2",
+  "roomId": "uuid|null",
+  "isBookable": false,
+  "purchaseDate": "2026-01-15",
+  "purchaseCost": 1499.0,
+  "customValues": {}
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "asset": {
+    "id": "uuid",
+    "tag": "AF-0001",
+    "name": "Dell Latitude",
+    "serialNo": "SN-123",
+    "category": {
+      "id": "uuid",
+      "name": "Electronics"
+    },
+    "department": {
+      "id": "uuid",
+      "name": "Engineering"
+    },
+    "status": "AVAILABLE",
+    "condition": "GOOD",
+    "location": "HQ / Floor 2",
+    "roomId": "uuid|null",
+    "isBookable": false,
+    "purchaseDate": "2026-01-15",
+    "purchaseCost": 1499.0,
+    "customValues": {},
+    "retirement": null,
+    "disposal": null,
+    "currentHolder": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "createdAt": "ISO"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/assets/:id</code> — Full detail incl. documents (403 outside scope).</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "asset": {
+    "id": "uuid",
+    "tag": "AF-0001",
+    "name": "Dell Latitude",
+    "serialNo": "SN-123",
+    "category": {
+      "id": "uuid",
+      "name": "Electronics"
+    },
+    "department": {
+      "id": "uuid",
+      "name": "Engineering"
+    },
+    "status": "AVAILABLE",
+    "condition": "GOOD",
+    "location": "HQ / Floor 2",
+    "roomId": "uuid|null",
+    "isBookable": false,
+    "purchaseDate": "2026-01-15",
+    "purchaseCost": 1499.0,
+    "customValues": {},
+    "retirement": null,
+    "disposal": null,
+    "currentHolder": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "createdAt": "ISO",
+    "documents": [
+      {
+        "id": "uuid",
+        "url": "https://\u2026",
+        "filename": "invoice.pdf",
+        "mime": "application/pdf",
+        "bytes": 20480,
+        "created_at": "ISO"
+      }
+    ]
+  }
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/assets/:id</code> — Partial update.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "name": "\u2026",
+  "serialNo": "\u2026",
+  "categoryId": "uuid",
+  "departmentId": "uuid",
+  "condition": "FAIR",
+  "location": "\u2026",
+  "roomId": "uuid|null",
+  "isBookable": true,
+  "purchaseDate": "2026-01-15",
+  "purchaseCost": 1499.0,
+  "customValues": {},
+  "status": "AVAILABLE"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "asset": {
+    "id": "uuid",
+    "tag": "AF-0001",
+    "name": "Dell Latitude",
+    "serialNo": "SN-123",
+    "category": {
+      "id": "uuid",
+      "name": "Electronics"
+    },
+    "department": {
+      "id": "uuid",
+      "name": "Engineering"
+    },
+    "status": "AVAILABLE",
+    "condition": "GOOD",
+    "location": "HQ / Floor 2",
+    "roomId": "uuid|null",
+    "isBookable": false,
+    "purchaseDate": "2026-01-15",
+    "purchaseCost": 1499.0,
+    "customValues": {},
+    "retirement": null,
+    "disposal": null,
+    "currentHolder": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "createdAt": "ISO"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/assets/:id/history</code> — Allocation + maintenance timeline.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "allocationHistory": [
+    {
+      "id": "uuid",
+      "date": "ISO",
+      "event": "Allocated to Jane",
+      "status": "RETURNED",
+      "expectedReturnDate": "ISO|null",
+      "returnedAt": "ISO|null",
+      "conditionOnReturn": "GOOD|null"
+    }
+  ],
+  "maintenanceHistory": [
+    {
+      "id": "uuid",
+      "date": "ISO",
+      "event": "Screen flicker",
+      "status": "RESOLVED",
+      "priority": "HIGH",
+      "resolvedAt": "ISO|null",
+      "resolutionNotes": "\u2026|null"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/assets/:id/documents</code> — multipart/form-data, field `file` (max 10 MB) → Cloudinary.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request:** `multipart/form-data` — field `file` — the document. Accepts **PNG, JPEG, or PDF only** (max 10 MB); any other type → `400 Only PNG, JPEG or PDF files are allowed`. Images are stored **compressed** (`quality: auto:good`, capped at 2000px) via Cloudinary; PDFs are stored as-is (`raw`) with their `.pdf` extension preserved.
+
+**Response `201` — `data`:**
+
+```json
+{
+  "document": {
+    "id": "uuid",
+    "url": "https://\u2026",
+    "filename": "invoice.pdf",
+    "mime": "application/pdf",
+    "bytes": 20480,
+    "created_at": "ISO"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/assets/:id/qr</code> — QR PNG data-URL encoding the tag.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "tag": "AF-0001",
+  "qrUrl": "data:image/png;base64,\u2026"
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/assets/:id/retire</code> — Requires AVAILABLE.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "reason": "End of life",
+  "retirementDate": "2026-07-12"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "asset": {
+    "id": "uuid",
+    "tag": "AF-0001",
+    "status": "RETIRED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/assets/:id/dispose</code> — Requires RETIRED.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "method": "Recycled",
+  "notes": "\u2026",
+  "disposalDate": "2026-07-12"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "asset": {
+    "id": "uuid",
+    "tag": "AF-0001",
+    "status": "DISPOSED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/assets/:id/mark-lost</code> — Flag LOST.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "asset": {
+    "id": "uuid",
+    "tag": "AF-0001",
+    "status": "LOST"
+  }
+}
+```
+
+</details>
+
+### 17.6 Locations (`/api/locations`)
+
+Buildings → Floors → Rooms cascade.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated |
+
+<details><summary><code>GET /api/locations/</code> — Nested tree.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "locations": [
+    {
+      "id": "uuid",
+      "building": "HQ",
+      "city": "Ahmedabad",
+      "floors": [
+        {
+          "id": "uuid",
+          "name": "Floor 2",
+          "rooms": [
+            {
+              "id": "uuid",
+              "name": "Room B2"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+</details>
+
+### 17.7 Allocations (`/api/allocations`)
+
+List scoped by holder. Create / return-approve: **Admin/AM**. Approve: **Admin/AM/Dept Head**. Return: the holder.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated (scoped) |
+| `GET` | `/kanban` | Authenticated (scoped) |
+| `GET` | `/overdue` | Authenticated (scoped) |
+| `GET` | `/:id` | Authenticated (scoped) |
+| `POST` | `/` | Admin / Asset Manager |
+| `POST` | `/:id/approve` | Admin / AM / Dept Head |
+| `POST` | `/:id/return` | Holder only |
+| `POST` | `/:id/return/approve` | Admin / Asset Manager |
+
+<details><summary><code>GET /api/allocations/</code> — List (max 200).</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `assetId` | no |  |
+| `employeeId` | no |  |
+| `departmentId` | no |  |
+| `status` | no | PENDING|ACTIVE|RETURN_REQUESTED|RETURNED|REJECTED |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "allocations": [
+    {
+      "id": "uuid",
+      "status": "ACTIVE",
+      "purpose": "Onboarding kit",
+      "asset": {
+        "id": "uuid",
+        "tag": "AF-0001",
+        "name": "Laptop"
+      },
+      "holder": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "allocatedBy": "Manager",
+      "allocatedAt": "ISO",
+      "expectedReturnDate": "ISO|null",
+      "returnRequestedAt": "ISO|null",
+      "conditionOnReturn": "null",
+      "returnNotes": "null",
+      "returnedAt": "null",
+      "isOverdue": false
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/allocations/kanban</code> — Grouped by column.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "columns": {
+    "PENDING": {
+      "count": 1,
+      "items": [
+        {
+          "id": "uuid",
+          "status": "ACTIVE",
+          "purpose": "Onboarding kit",
+          "asset": {
+            "id": "uuid",
+            "tag": "AF-0001",
+            "name": "Laptop"
+          },
+          "holder": {
+            "id": "uuid",
+            "name": "Jane"
+          },
+          "allocatedBy": "Manager",
+          "allocatedAt": "ISO",
+          "expectedReturnDate": "ISO|null",
+          "returnRequestedAt": "ISO|null",
+          "conditionOnReturn": "null",
+          "returnNotes": "null",
+          "returnedAt": "null",
+          "isOverdue": false
+        }
+      ]
+    },
+    "ACTIVE": {
+      "count": 0,
+      "items": []
+    },
+    "RETURN_REQUESTED": {
+      "count": 0,
+      "items": []
+    },
+    "OVERDUE": {
+      "count": 0,
+      "items": []
+    }
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/allocations/overdue</code> — Past due, with daysOverdue.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "overdue": [
+    {
+      "id": "uuid",
+      "status": "ACTIVE",
+      "purpose": "Onboarding kit",
+      "asset": {
+        "id": "uuid",
+        "tag": "AF-0001",
+        "name": "Laptop"
+      },
+      "holder": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "allocatedBy": "Manager",
+      "allocatedAt": "ISO",
+      "expectedReturnDate": "ISO|null",
+      "returnRequestedAt": "ISO|null",
+      "conditionOnReturn": "null",
+      "returnNotes": "null",
+      "returnedAt": "null",
+      "isOverdue": false,
+      "daysOverdue": 3
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/allocations/:id</code> — Single allocation.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "allocation": {
+    "id": "uuid",
+    "status": "ACTIVE",
+    "purpose": "Onboarding kit",
+    "asset": {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop"
+    },
+    "holder": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "allocatedBy": "Manager",
+    "allocatedAt": "ISO",
+    "expectedReturnDate": "ISO|null",
+    "returnRequestedAt": "ISO|null",
+    "conditionOnReturn": "null",
+    "returnNotes": "null",
+    "returnedAt": "null",
+    "isOverdue": false
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/allocations/</code> — Allocate an AVAILABLE asset to an ACTIVE user.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "assetId": "uuid",
+  "employeeId": "uuid",
+  "purpose": "Onboarding kit",
+  "expectedReturnDate": "2026-12-31"
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "allocation": {
+    "id": "uuid",
+    "status": "ACTIVE",
+    "purpose": "Onboarding kit",
+    "asset": {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop"
+    },
+    "holder": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "allocatedBy": "Manager",
+    "allocatedAt": "ISO",
+    "expectedReturnDate": "ISO|null",
+    "returnRequestedAt": "ISO|null",
+    "conditionOnReturn": "null",
+    "returnNotes": "null",
+    "returnedAt": "null",
+    "isOverdue": false
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/allocations/:id/approve</code> — PENDING → ACTIVE.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "allocation": {
+    "id": "uuid",
+    "status": "ACTIVE"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/allocations/:id/return</code> — Initiate return with condition.</summary>
+
+**Access:** Holder only
+
+**Request body**
+
+```json
+{
+  "condition": "GOOD",
+  "notes": "\u2026"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "allocation": {
+    "id": "uuid",
+    "status": "RETURN_REQUESTED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/allocations/:id/return/approve</code> — Confirm check-in; asset → AVAILABLE.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "allocation": {
+    "id": "uuid",
+    "status": "RETURNED"
+  }
+}
+```
+
+</details>
+
+### 17.8 Transfers (`/api/transfers`)
+
+Anyone requests; **Admin/AM/Dept Head** decide. Scoped list.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated (scoped) |
+| `GET` | `/:id` | Authenticated (scoped) |
+| `POST` | `/` | Authenticated |
+| `POST` | `/:id/approve` | Admin / AM / Dept Head |
+| `POST` | `/:id/reject` | Admin / AM / Dept Head |
+
+<details><summary><code>GET /api/transfers/</code> — List (max 200).</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `status` | no | REQUESTED|APPROVED|REJECTED |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "transfers": [
+    {
+      "id": "uuid",
+      "status": "REQUESTED",
+      "reason": "\u2026",
+      "decisionReason": "null",
+      "asset": {
+        "id": "uuid",
+        "tag": "AF-0001",
+        "name": "Laptop"
+      },
+      "from": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "to": {
+        "id": "uuid",
+        "name": "Arjun"
+      },
+      "decidedBy": "null",
+      "createdAt": "ISO",
+      "decidedAt": "null"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/transfers/:id</code> — Single transfer.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "transfer": {
+    "id": "uuid",
+    "status": "REQUESTED",
+    "reason": "\u2026",
+    "decisionReason": "null",
+    "asset": {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop"
+    },
+    "from": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "to": {
+      "id": "uuid",
+      "name": "Arjun"
+    },
+    "decidedBy": "null",
+    "createdAt": "ISO",
+    "decidedAt": "null"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/transfers/</code> — Request transfer of an ALLOCATED asset.</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "assetId": "uuid",
+  "toUserId": "uuid",
+  "reason": "\u2026"
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "transfer": {
+    "id": "uuid",
+    "status": "REQUESTED",
+    "reason": "\u2026",
+    "decisionReason": "null",
+    "asset": {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop"
+    },
+    "from": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "to": {
+      "id": "uuid",
+      "name": "Arjun"
+    },
+    "decidedBy": "null",
+    "createdAt": "ISO",
+    "decidedAt": "null"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/transfers/:id/approve</code> — Move allocation to target.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "transfer": {
+    "id": "uuid",
+    "status": "APPROVED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/transfers/:id/reject</code> — Reject with reason.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request body**
+
+```json
+{
+  "reason": "\u2026"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "transfer": {
+    "id": "uuid",
+    "status": "REJECTED"
+  }
+}
+```
+
+</details>
+
+### 17.9 Resources (bookable) (`/api/resources`)
+
+Bookable assets and their calendars.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated |
+| `GET` | `/:id/calendar` | Authenticated |
+| `GET` | `/:id/availability` | Authenticated |
+
+<details><summary><code>GET /api/resources/</code> — Bookable, in-service assets.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "resources": [
+    {
+      "id": "uuid",
+      "tag": "AF-0100",
+      "name": "Room B2",
+      "location": "HQ",
+      "status": "AVAILABLE"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/resources/:id/calendar</code> — Confirmed bookings in a window (default next 7 days).</summary>
+
+**Access:** Authenticated
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `from` | no | ISO |
+| `to` | no | ISO |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "bookings": [
+    {
+      "id": "uuid",
+      "resource": {
+        "id": "uuid",
+        "tag": "AF-0100",
+        "name": "Room B2"
+      },
+      "bookedBy": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "start": "ISO",
+      "end": "ISO",
+      "purpose": "Sprint planning",
+      "attendees": [],
+      "seriesId": "uuid|null",
+      "status": "UPCOMING",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/resources/:id/availability</code> — Hourly 09:00–18:00 slot grid.</summary>
+
+**Access:** Authenticated
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `date` | yes | YYYY-MM-DD |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "date": "2026-07-14",
+  "slots": [
+    {
+      "start": "09:00",
+      "end": "10:00",
+      "available": true
+    }
+  ]
+}
+```
+
+</details>
+
+### 17.10 Bookings (`/api/bookings`)
+
+Conflict-checked. Time input: `{start,end}` ISO **or** `{date,startTime,endTime}`. Manage = owner, booker's Dept Head, or Admin/AM.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated (scoped) |
+| `GET` | `/my` | Authenticated |
+| `POST` | `/check-availability` | Authenticated |
+| `POST` | `/` | Authenticated |
+| `POST` | `/recurring` | Authenticated |
+| `GET` | `/:id` | Manager of booking |
+| `POST` | `/:id/cancel` | Manager of booking |
+| `POST` | `/:id/reschedule` | Manager of booking |
+
+<details><summary><code>GET /api/bookings/</code> — List (max 200); status derived.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `resourceId` | no |  |
+| `status` | no | UPCOMING|ONGOING|COMPLETED|CANCELLED |
+| `date` | no | YYYY-MM-DD |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "bookings": [
+    {
+      "id": "uuid",
+      "resource": {
+        "id": "uuid",
+        "tag": "AF-0100",
+        "name": "Room B2"
+      },
+      "bookedBy": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "start": "ISO",
+      "end": "ISO",
+      "purpose": "Sprint planning",
+      "attendees": [],
+      "seriesId": "uuid|null",
+      "status": "UPCOMING",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/bookings/my</code> — Caller's bookings.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "bookings": [
+    {
+      "id": "uuid",
+      "resource": {
+        "id": "uuid",
+        "tag": "AF-0100",
+        "name": "Room B2"
+      },
+      "bookedBy": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "start": "ISO",
+      "end": "ISO",
+      "purpose": "Sprint planning",
+      "attendees": [],
+      "seriesId": "uuid|null",
+      "status": "UPCOMING",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/bookings/check-availability</code> — Overlap check + alternatives.</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "resourceId": "uuid",
+  "date": "2026-07-14",
+  "startTime": "09:00",
+  "endTime": "10:00"
+}
+```
+
+**Response `200` — `data`:**
+
+Available:
+```json
+{
+  "available": true
+}
+```
+Conflict:
+```json
+{
+  "available": false,
+  "conflict": {
+    "bookedBy": "Jane",
+    "start": "ISO",
+    "end": "ISO"
+  },
+  "alternatives": [
+    {
+      "resourceId": "uuid",
+      "resourceName": "Room A1"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/bookings/</code> — Create (409 on conflict).</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "resourceId": "uuid",
+  "start": "2026-07-14T09:00:00",
+  "end": "2026-07-14T10:00:00",
+  "purpose": "Sprint planning",
+  "attendees": []
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "booking": {
+    "id": "uuid",
+    "resource": {
+      "id": "uuid",
+      "tag": "AF-0100",
+      "name": "Room B2"
+    },
+    "bookedBy": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "start": "ISO",
+    "end": "ISO",
+    "purpose": "Sprint planning",
+    "attendees": [],
+    "seriesId": "uuid|null",
+    "status": "UPCOMING",
+    "createdAt": "ISO"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/bookings/recurring</code> — Daily/weekly series (cap 60; skips conflicts).</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "resourceId": "uuid",
+  "frequency": "WEEKLY",
+  "startDate": "2026-07-14",
+  "endDate": "2026-08-14",
+  "startTime": "09:00",
+  "endTime": "10:00",
+  "purpose": "Standup",
+  "attendees": []
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "seriesId": "uuid",
+  "bookingsCreated": 4,
+  "conflicts": [
+    "2026-07-28"
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/bookings/:id</code> — Single booking.</summary>
+
+**Access:** Manager of booking
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "booking": {
+    "id": "uuid",
+    "resource": {
+      "id": "uuid",
+      "tag": "AF-0100",
+      "name": "Room B2"
+    },
+    "bookedBy": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "start": "ISO",
+    "end": "ISO",
+    "purpose": "Sprint planning",
+    "attendees": [],
+    "seriesId": "uuid|null",
+    "status": "UPCOMING",
+    "createdAt": "ISO"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/bookings/:id/cancel</code> — Cancel.</summary>
+
+**Access:** Manager of booking
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "booking": {
+    "id": "uuid",
+    "status": "CANCELLED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/bookings/:id/reschedule</code> — Move (re-runs overlap check).</summary>
+
+**Access:** Manager of booking
+
+**Request body**
+
+```json
+{
+  "start": "2026-07-14T11:00:00",
+  "end": "2026-07-14T12:00:00"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "booking": {
+    "id": "uuid",
+    "start": "ISO",
+    "end": "ISO",
+    "status": "UPCOMING"
+  }
+}
+```
+
+</details>
+
+### 17.11 Maintenance (`/api/maintenance`)
+
+Pipeline `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → RESOLVED` (+ REJECTED, ESCALATED). List scoped.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated (scoped) |
+| `GET` | `/:id` | Authenticated |
+| `POST` | `/` | Authenticated |
+| `POST` | `/:id/approve` | Admin / Asset Manager |
+| `POST` | `/:id/reject` | Admin / Asset Manager |
+| `POST` | `/:id/assign` | Admin / Asset Manager |
+| `POST` | `/:id/start` | Assigned technician / Manager |
+| `POST` | `/:id/resolve` | Technician / Manager |
+| `POST` | `/:id/escalate` | Admin / Asset Manager |
+| `GET` | `/:id/comments` | Authenticated |
+| `POST` | `/:id/comments` | Authenticated |
+
+<details><summary><code>GET /api/maintenance/</code> — List (max 200); employees also see assigned jobs.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `status` | no | PENDING|APPROVED|REJECTED|TECHNICIAN_ASSIGNED|IN_PROGRESS|RESOLVED|ESCALATED |
+| `priority` | no | LOW|MEDIUM|HIGH|CRITICAL |
+| `assetId` | no |  |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "requests": [
+    {
+      "id": "uuid",
+      "issue": "Screen flicker",
+      "issueType": "HARDWARE",
+      "priority": "HIGH",
+      "status": "PENDING",
+      "asset": {
+        "id": "uuid",
+        "tag": "AF-0001",
+        "name": "Laptop"
+      },
+      "raisedBy": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "technician": null,
+      "startedAt": "null",
+      "resolvedAt": "null",
+      "resolutionNotes": "null",
+      "cost": null,
+      "rejectedReason": "null",
+      "escalated": null,
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/maintenance/:id</code> — Detail + commentCount.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "issue": "Screen flicker",
+    "issueType": "HARDWARE",
+    "priority": "HIGH",
+    "status": "PENDING",
+    "asset": {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop"
+    },
+    "raisedBy": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "technician": null,
+    "startedAt": "null",
+    "resolvedAt": "null",
+    "resolutionNotes": "null",
+    "cost": null,
+    "rejectedReason": "null",
+    "escalated": null,
+    "createdAt": "ISO",
+    "commentCount": 3
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/</code> — Raise request (priority defaults MEDIUM).</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "assetId": "uuid",
+  "issue": "Screen flicker",
+  "issueType": "HARDWARE",
+  "priority": "HIGH"
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "issue": "Screen flicker",
+    "issueType": "HARDWARE",
+    "priority": "HIGH",
+    "status": "PENDING",
+    "asset": {
+      "id": "uuid",
+      "tag": "AF-0001",
+      "name": "Laptop"
+    },
+    "raisedBy": {
+      "id": "uuid",
+      "name": "Jane"
+    },
+    "technician": null,
+    "startedAt": "null",
+    "resolvedAt": "null",
+    "resolutionNotes": "null",
+    "cost": null,
+    "rejectedReason": "null",
+    "escalated": null,
+    "createdAt": "ISO"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/approve</code> — PENDING → APPROVED; asset UNDER_MAINTENANCE.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "status": "APPROVED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/reject</code> — Reject PENDING with reason.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "reason": "\u2026"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "status": "REJECTED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/assign</code> — Assign technician (id or name).</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "technicianId": "uuid|null",
+  "technicianName": "Vendor Co."
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "status": "TECHNICIAN_ASSIGNED",
+    "technician": {
+      "id": "uuid|null",
+      "name": "\u2026"
+    }
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/start</code> — ASSIGNED → IN_PROGRESS.</summary>
+
+**Access:** Assigned technician / Manager
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "status": "IN_PROGRESS"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/resolve</code> — Resolve; asset back to AVAILABLE/ALLOCATED.</summary>
+
+**Access:** Technician / Manager
+
+**Request body**
+
+```json
+{
+  "notes": "Replaced panel",
+  "cost": 220.5
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "status": "RESOLVED"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/escalate</code> — Escalate; priority → CRITICAL.</summary>
+
+**Access:** Admin / Asset Manager
+
+**Request body**
+
+```json
+{
+  "reason": "SLA breach",
+  "escalateTo": "ADMIN"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "request": {
+    "id": "uuid",
+    "status": "ESCALATED",
+    "priority": "CRITICAL"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/maintenance/:id/comments</code> — Comment thread.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "comments": [
+    {
+      "id": "uuid",
+      "author": {
+        "id": "uuid",
+        "name": "Jane",
+        "role": "EMPLOYEE"
+      },
+      "text": "\u2026",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/maintenance/:id/comments</code> — Add comment.</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "text": "Vendor scheduled Monday."
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "comment": {
+    "id": "uuid",
+    "text": "\u2026",
+    "createdAt": "ISO"
+  }
+}
+```
+
+</details>
+
+### 17.12 Audit Cycles (`/api/audit-cycles`)
+
+Create/auditors/close: **Admin**. Mark items: assigned auditor or Admin. Reads scoped for Dept Heads.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated (scoped) |
+| `POST` | `/` | Admin |
+| `GET` | `/:id` | Authenticated |
+| `POST` | `/:id/auditors` | Admin |
+| `GET` | `/:id/items` | Authenticated |
+| `PATCH` | `/:id/items/bulk-update` | Assigned auditor / Admin |
+| `PATCH` | `/:id/items/:itemId` | Assigned auditor / Admin |
+| `GET` | `/:id/progress` | Authenticated |
+| `GET` | `/:id/discrepancy-report` | Authenticated |
+| `GET` | `/:id/summary` | Authenticated |
+| `POST` | `/:id/close` | Admin |
+
+<details><summary><code>GET /api/audit-cycles/</code> — List cycles.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `status` | no | ACTIVE|CLOSED |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "cycles": [
+    {
+      "id": "uuid",
+      "name": "Q3 2026 Audit",
+      "scopeType": "DEPARTMENT",
+      "startDate": "2026-07-15",
+      "endDate": "2026-07-30",
+      "status": "ACTIVE",
+      "createdAt": "ISO",
+      "closedAt": "null",
+      "stats": {
+        "total": 120,
+        "verified": 80,
+        "discrepancy": 3,
+        "missing": 1,
+        "pending": 36,
+        "completionPercent": 70
+      }
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/audit-cycles/</code> — Create + snapshot checklist from assets in scope.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "name": "Q3 2026 Audit",
+  "departmentIds": [
+    "uuid"
+  ],
+  "startDate": "2026-07-15",
+  "endDate": "2026-07-30"
+}
+```
+
+**Response `201` — `data`:**
+
+```json
+{
+  "cycle": {
+    "id": "uuid",
+    "name": "Q3 2026 Audit",
+    "scopeType": "DEPARTMENT",
+    "startDate": "2026-07-15",
+    "endDate": "2026-07-30",
+    "status": "ACTIVE",
+    "createdAt": "ISO",
+    "closedAt": "null",
+    "stats": {
+      "total": 120,
+      "verified": 80,
+      "discrepancy": 3,
+      "missing": 1,
+      "pending": 36,
+      "completionPercent": 70
+    }
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/audit-cycles/:id</code> — Detail + auditors + departments.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "cycle": {
+    "id": "uuid",
+    "name": "Q3 2026 Audit",
+    "scopeType": "DEPARTMENT",
+    "startDate": "2026-07-15",
+    "endDate": "2026-07-30",
+    "status": "ACTIVE",
+    "createdAt": "ISO",
+    "closedAt": "null",
+    "stats": {
+      "total": 120,
+      "verified": 80,
+      "discrepancy": 3,
+      "missing": 1,
+      "pending": 36,
+      "completionPercent": 70
+    },
+    "auditors": [
+      {
+        "id": "uuid",
+        "name": "Jane",
+        "email": "\u2026"
+      }
+    ],
+    "departments": [
+      {
+        "id": "uuid",
+        "name": "Engineering"
+      }
+    ]
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/audit-cycles/:id/auditors</code> — Assign auditors (idempotent).</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{
+  "userIds": [
+    "uuid",
+    "uuid"
+  ]
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "addedCount": 2
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/audit-cycles/:id/items</code> — Checklist + counts.</summary>
+
+**Access:** Authenticated
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `status` | no | PENDING|VERIFIED|DISCREPANCY|MISSING |
+| `q` | no | search |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "asset": {
+        "id": "uuid",
+        "tag": "AF-0001",
+        "name": "Laptop",
+        "serial": "SN-1",
+        "status": "AVAILABLE"
+      },
+      "expectedLocation": "HQ",
+      "verification": "VERIFIED",
+      "notes": "null",
+      "photo": "null",
+      "verifiedBy": "Jane|null",
+      "verifiedAt": "ISO|null"
+    }
+  ],
+  "total": 120,
+  "verified": 80,
+  "discrepancy": 3,
+  "missing": 1,
+  "pending": 36
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/audit-cycles/:id/items/bulk-update</code> — Mark many (VERIFIED|DISCREPANCY|MISSING).</summary>
+
+**Access:** Assigned auditor / Admin
+
+**Request body**
+
+```json
+{
+  "verification": "VERIFIED",
+  "itemIds": [
+    "uuid"
+  ],
+  "notes": ""
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "updatedCount": 5
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/audit-cycles/:id/items/:itemId</code> — Mark one (optional photo).</summary>
+
+**Access:** Assigned auditor / Admin
+
+**Request body**
+
+```json
+{
+  "verification": "DISCREPANCY",
+  "notes": "Wrong room",
+  "photoUrl": "null"
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "item": {
+    "id": "uuid",
+    "verification": "DISCREPANCY"
+  }
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/audit-cycles/:id/progress</code> — Totals + per-auditor breakdown.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "total": 120,
+  "verified": 80,
+  "discrepancy": 3,
+  "missing": 1,
+  "pending": 36,
+  "completionPercent": 70,
+  "byAuditor": [
+    {
+      "auditor": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "completed": 40
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/audit-cycles/:id/discrepancy-report</code> — Flagged items.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "flaggedCount": 4,
+  "items": [
+    {
+      "assetTag": "AF-0001",
+      "assetName": "Laptop",
+      "verificationStatus": "DISCREPANCY",
+      "notes": "\u2026",
+      "verifiedBy": "Jane",
+      "verifiedAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/audit-cycles/:id/summary</code> — Historical summary.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "summary": {
+    "id": "uuid",
+    "name": "Q3 2026 Audit",
+    "scopeType": "DEPARTMENT",
+    "startDate": "2026-07-15",
+    "endDate": "2026-07-30",
+    "status": "ACTIVE",
+    "createdAt": "ISO",
+    "closedAt": "null",
+    "stats": {
+      "total": 120,
+      "verified": 80,
+      "discrepancy": 3,
+      "missing": 1,
+      "pending": 36,
+      "completionPercent": 70
+    }
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/audit-cycles/:id/close</code> — Lock cycle; MISSING items → assets LOST.</summary>
+
+**Access:** Admin
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "cycle": {
+    "id": "uuid",
+    "status": "CLOSED",
+    "assetsMarkedLost": 1
+  }
+}
+```
+
+</details>
+
+### 17.13 Dashboard (`/api/dashboard`)
+
+All widgets **scoped**: Employee → own, Dept Head → dept, Admin/AM → org.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/kpis` | Authenticated (scoped) |
+| `GET` | `/overdue` | Authenticated (scoped) |
+| `GET` | `/activity-feed` | Authenticated (scoped) |
+| `GET` | `/utilization-chart` | Authenticated |
+| `GET` | `/upcoming-returns` | Authenticated (scoped) |
+| `GET` | `/health-score` | Authenticated |
+
+<details><summary><code>GET /api/dashboard/kpis</code> — Headline counters.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "assetsAvailable": 50,
+  "assetsAllocated": 40,
+  "underMaintenance": 5,
+  "maintenanceOpen": 8,
+  "activeBookings": 12,
+  "pendingTransfers": 3,
+  "upcomingReturns": 7
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/dashboard/overdue</code> — Overdue returns.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "overdueReturns": [
+    {
+      "assetTag": "AF-0001",
+      "assetName": "Laptop",
+      "holder": "Jane",
+      "expectedReturnDate": "ISO",
+      "daysOverdue": 3
+    }
+  ],
+  "overdueBookings": []
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/dashboard/activity-feed</code> — Recent timeline.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `limit` | no | default 10, max 50 |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "activities": [
+    {
+      "id": "uuid",
+      "type": "ALLOCATION",
+      "description": "\u2026",
+      "actor": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "entityType": "ASSET",
+      "entityId": "uuid",
+      "createdAt": "ISO"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/dashboard/utilization-chart</code> — % allocated per day.</summary>
+
+**Access:** Authenticated
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `days` | no | 7–90, default 30 |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "dataPoints": [
+    {
+      "date": "2026-07-01",
+      "utilization": 62
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/dashboard/upcoming-returns</code> — Next returns due.</summary>
+
+**Access:** Authenticated (scoped)
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `limit` | no | default 5, max 20 |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "returns": [
+    {
+      "allocationId": "uuid",
+      "asset": {
+        "tag": "AF-0001",
+        "name": "Laptop"
+      },
+      "holder": {
+        "id": "uuid",
+        "name": "Jane"
+      },
+      "expectedReturnDate": "ISO",
+      "status": "ON_TIME"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/dashboard/health-score</code> — Composite fleet health.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "score": 82,
+  "label": "Good standing",
+  "breakdown": {
+    "availableRatio": 0.9,
+    "maintenanceBacklog": 0.95,
+    "auditCompliance": 0.7,
+    "overdueRate": 0.05
+  }
+}
+```
+
+</details>
+
+### 17.14 Reports (`/api/reports`)
+
+**Admin / Asset Manager / Dept Head** (dept heads scoped to their dept).
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/utilization` | Admin / AM / Dept Head |
+| `GET` | `/maintenance-frequency` | Admin / AM / Dept Head |
+| `GET` | `/due-for-maintenance` | Admin / AM / Dept Head |
+| `GET` | `/allocation-summary` | Admin / AM / Dept Head |
+| `GET` | `/booking-heatmap` | Admin / AM / Dept Head |
+| `GET` | `/export` | Admin / AM / Dept Head |
+
+<details><summary><code>GET /api/reports/utilization</code> — Most-used + idle assets.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "mostUsed": [
+    {
+      "asset": "AF-0001 \u2014 Laptop",
+      "count": 12
+    }
+  ],
+  "idle": [
+    {
+      "asset": "AF-0009 \u2014 Chair",
+      "idleDays": 45
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/reports/maintenance-frequency</code> — Counts by category.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "byCategory": [
+    {
+      "category": "Electronics",
+      "count": 18
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/reports/due-for-maintenance</code> — ≥2 repairs or >4 yrs old.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "dueOrNearingRetirement": [
+    {
+      "asset": "AF-0001 \u2014 Laptop",
+      "note": "3 repairs on record"
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/reports/allocation-summary</code> — Active allocations by dept.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "byDepartment": [
+    {
+      "department": "Engineering",
+      "allocatedCount": 24
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/reports/booking-heatmap</code> — Peak hours per resource.</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "heatmap": [
+    {
+      "resource": "Room B2",
+      "peakHour": "09:00-10:00",
+      "bookings": 14
+    }
+  ]
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/reports/export</code> — CSV download (envelope does not apply).</summary>
+
+**Access:** Admin / AM / Dept Head
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `type` | yes | utilization|maintenance-frequency|due-for-maintenance|allocation-summary|booking-heatmap |
+| `format` | yes | csv |
+
+**Response `200` — `data`:**
+
+`text/csv` attachment (raw CSV, not the JSON envelope).
+
+</details>
+
+### 17.15 Notifications (`/api/notifications`)
+
+All scoped to the logged-in user.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Authenticated |
+| `GET` | `/preferences` | Authenticated |
+| `PATCH` | `/preferences` | Authenticated |
+| `POST` | `/mark-all-read` | Authenticated |
+| `PATCH` | `/:id/read` | Authenticated (owner) |
+| `DELETE` | `/:id` | Authenticated (owner) |
+
+<details><summary><code>GET /api/notifications/</code> — Own feed (max 100) + unread count.</summary>
+
+**Access:** Authenticated
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `unread` | no | true = unread only |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "notifications": [
+    {
+      "id": "uuid",
+      "type": "ALLOCATION",
+      "title": "\u2026",
+      "message": "\u2026",
+      "entity_type": "ALLOCATION",
+      "entity_id": "uuid",
+      "read": false,
+      "created_at": "ISO"
+    }
+  ],
+  "unreadCount": 4
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/notifications/preferences</code> — Merged over defaults.</summary>
+
+**Access:** Authenticated
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "preferences": {
+    "allocation": true,
+    "transfer": true,
+    "maintenance": true,
+    "booking": true,
+    "audit": true,
+    "email": false
+  }
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/notifications/preferences</code> — Upsert (partial merge).</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{
+  "allocation": true,
+  "transfer": true,
+  "maintenance": true,
+  "booking": true,
+  "audit": true,
+  "email": false
+}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "preferences": {
+    "allocation": true,
+    "transfer": true,
+    "maintenance": true,
+    "booking": true,
+    "audit": true,
+    "email": false
+  }
+}
+```
+
+</details>
+
+<details><summary><code>POST /api/notifications/mark-all-read</code> — Mark all read.</summary>
+
+**Access:** Authenticated
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+```json
+{
+  "updatedCount": 4
+}
+```
+
+</details>
+
+<details><summary><code>PATCH /api/notifications/:id/read</code> — Mark one read.</summary>
+
+**Access:** Authenticated (owner)
+
+**Request body**
+
+```json
+{}
+```
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+<details><summary><code>DELETE /api/notifications/:id</code> — Dismiss.</summary>
+
+**Access:** Authenticated (owner)
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+_No `data` payload (envelope `message` only)._
+
+</details>
+
+### 17.16 Activity Logs (`/api/activity-logs`)
+
+**Admin only** — full audit trail.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/` | Admin |
+| `GET` | `/export` | Admin |
+
+<details><summary><code>GET /api/activity-logs/</code> — Paginated, filterable.</summary>
+
+**Access:** Admin
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `page` | no | default 1 |
+| `limit` | no | default 25, max 100 |
+| `actionType` | no | ALLOCATION|RETURN|TRANSFER|BOOKING|MAINTENANCE|AUDIT|ASSET|USER_CHANGE|SYSTEM |
+| `userId` | no |  |
+| `entityType` | no |  |
+| `from` | no | YYYY-MM-DD |
+| `to` | no | YYYY-MM-DD |
+
+**Response `200` — `data`:**
+
+```json
+{
+  "logs": [
+    {
+      "id": "uuid",
+      "actionType": "ALLOCATION",
+      "entityType": "ASSET",
+      "entityId": "uuid",
+      "description": "\u2026",
+      "metadata": {},
+      "actor": {
+        "id": "uuid",
+        "name": "Jane",
+        "email": "\u2026"
+      },
+      "createdAt": "ISO"
+    }
+  ],
+  "total": 500,
+  "page": 1,
+  "limit": 25
+}
+```
+
+</details>
+
+<details><summary><code>GET /api/activity-logs/export</code> — CSV (max 5000 rows).</summary>
+
+**Access:** Admin
+
+**Query params**
+
+| Param | Required | Notes |
+|---|---|---|
+| `format` | yes | csv |
+| `from` | no | YYYY-MM-DD |
+| `to` | no | YYYY-MM-DD |
+| `actionType` | no |  |
+
+**Response `200` — `data`:**
+
+`text/csv` attachment.
+
+</details>
+
+### 17.17 Health (`/health`)
+
+Liveness/readiness. **No auth, no `/api` prefix.** Uses `{success,message,data,timestamp}`.
+
+| Method | Path | Access |
+|---|---|---|
+| `GET` | `/health` | Public |
+
+<details><summary><code>GET /health/health</code> — DB ping + uptime (200 healthy / 503 degraded).</summary>
+
+**Access:** Public
+
+**Request:** no body.
+
+**Response `200` — `data`:**
+
+```json
+{
+  "status": "ok",
+  "environment": "development",
+  "uptime_seconds": 3600,
+  "database": {
+    "status": "connected",
+    "latency_ms": 12.34
+  }
+}
+```
+
+</details>
+

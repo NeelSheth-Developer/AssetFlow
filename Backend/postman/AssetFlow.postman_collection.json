@@ -1,0 +1,3400 @@
+{
+  "info": {
+    "name": "AssetFlow API",
+    "description": "Complete API collection for the AssetFlow backend \u2014 **110 endpoints** across 17 modules.\n\n## Getting started\n1. Set the `baseUrl` variable (default `http://localhost:3000`).\n2. Run **Auth \u2192 Login** (or Signup). This sets HttpOnly `at`/`rt` cookies in Postman's cookie jar; every other request is then authenticated automatically \u2014 no bearer token to copy.\n3. Fill the id variables (`assetId`, `userId`, `departmentId`, \u2026) from list responses to exercise detail/update/action requests.\n\n## Response envelope\nAll responses use `{ success, message, data }`. Errors return the same shape with `success:false`.\n\n## Roles\nADMIN \u00b7 ASSET_MANAGER \u00b7 DEPT_HEAD \u00b7 EMPLOYEE. Each request lists its required access under **Access**.\n\n_Generated from the route source in `src/routes/`._",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Authentication & session. Login/signup set HttpOnly `at` and `rt` cookies which Postman's cookie jar stores automatically \u2014 subsequent requests are authenticated with no manual token handling.",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "signup"
+              ]
+            },
+            "description": "Register a new account. Role is always EMPLOYEE (any `role` in the body is ignored). Logs in immediately (sets cookies).\n\n**Access:** Public",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane.doe@gmail.com\",\n  \"password\": \"Str0ng!Pass\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Log in. Sets `at` (15m) + `rt` (7d) HttpOnly cookies. Run this first \u2014 everything else reuses the cookie.\n\n**Access:** Public",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@gmail.com\",\n  \"password\": \"Str0ng!Pass\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Rotates the refresh token and mints a new access token. Uses the `rt` cookie; no body.\n\n**Access:** Public (rt cookie)"
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Revokes the current refresh token and clears both cookies. Always 200.\n\n**Access:** Public"
+          },
+          "response": []
+        },
+        {
+          "name": "Get current user (me)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Returns the logged-in user with fresh role/department read from the DB.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "description": "Emails a 6-digit OTP. Always returns a generic 200 (anti-enumeration). Rate-limited to 1/60s.\n\n**Access:** Public",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@gmail.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "reset-password"
+              ]
+            },
+            "description": "Consumes the OTP and sets a new password in one atomic call. Revokes all sessions.\n\n**Access:** Public",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@gmail.com\",\n  \"otp\": \"123456\",\n  \"newPassword\": \"N3w!Password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "Change password while logged in. Current session survives; all others are revoked.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"Str0ng!Pass\",\n  \"newPassword\": \"N3w!Password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "description": "Employee directory. `PATCH /me/profile` is self-service for any user; everything else is Admin-only.",
+      "item": [
+        {
+          "name": "Update my profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "profile"
+              ]
+            },
+            "description": "Update your own name and/or designation. Cannot change role.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane D.\",\n  \"designation\": \"Senior Analyst\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users?page=1&limit=20&q=&role=&departmentId={{departmentId}}&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Page size (max 100)"
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Search name or email",
+                  "disabled": true
+                },
+                {
+                  "key": "role",
+                  "value": "",
+                  "description": "ADMIN | ASSET_MANAGER | DEPT_HEAD | EMPLOYEE",
+                  "disabled": true
+                },
+                {
+                  "key": "departmentId",
+                  "value": "{{departmentId}}",
+                  "description": "Filter by department",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "ACTIVE | INACTIVE",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Paginated directory with filters.\n\n**Access:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Get user's assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/assets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{userId}}",
+                "assets"
+              ]
+            },
+            "description": "Assets currently held by a user.\n\n**Access:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Get user's activity",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/activity?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{userId}}",
+                "activity"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": "Max rows (max 20)"
+                }
+              ]
+            },
+            "description": "Recent activity by a user.\n\n**Access:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Change user role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/role",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{userId}}",
+                "role"
+              ]
+            },
+            "description": "Promote/demote a user. ADMIN is never accepted. DEPT_HEAD requires a department first. Cannot change your own role.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"ASSET_MANAGER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Assign / unassign department",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/department",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{userId}}",
+                "department"
+              ]
+            },
+            "description": "Set a user's department (or null to unassign). Cannot unassign a Dept Head.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"departmentId\": \"{{departmentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Set user status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "{{userId}}",
+                "status"
+              ]
+            },
+            "description": "Activate/deactivate. Deactivating revokes all their refresh tokens. Cannot deactivate yourself.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Departments",
+      "description": "Organization setup. Reads: any authenticated user. Writes: Admin only.",
+      "item": [
+        {
+          "name": "List departments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments"
+              ]
+            },
+            "description": "All departments with employee & asset counts.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Get department",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments/{{departmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments",
+                "{{departmentId}}"
+              ]
+            },
+            "description": "Single department detail.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Get department employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments/{{departmentId}}/employees",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments",
+                "{{departmentId}}",
+                "employees"
+              ]
+            },
+            "description": "Members of a department.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Get department assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments/{{departmentId}}/assets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments",
+                "{{departmentId}}",
+                "assets"
+              ]
+            },
+            "description": "Assets owned by a department.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Create department",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments"
+              ]
+            },
+            "description": "Create a department. headId/parentId optional.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Engineering\",\n  \"headId\": null,\n  \"parentId\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update department",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments/{{departmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments",
+                "{{departmentId}}"
+              ]
+            },
+            "description": "Partial update. A department cannot be its own parent.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"R&D\",\n  \"headId\": \"{{userId}}\",\n  \"parentId\": null,\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete department",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/departments/{{departmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "departments",
+                "{{departmentId}}"
+              ]
+            },
+            "description": "Delete. Users' department_id is set NULL. Fails if it has child departments.\n\n**Access:** Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Categories",
+      "description": "Asset categories with per-category custom fields. Reads: any user. Writes: Admin only.",
+      "item": [
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            },
+            "description": "Flat list with asset counts.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Category tree",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/tree",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "tree"
+              ]
+            },
+            "description": "Hierarchical (parent/child) view.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Get category",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "description": "Single category + custom fields.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Add custom field",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}/custom-fields",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}",
+                "custom-fields"
+              ]
+            },
+            "description": "Append a custom field definition. type: text | number | date | select.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Warranty Expiry\",\n  \"key\": \"warrantyExpiry\",\n  \"type\": \"date\",\n  \"required\": false,\n  \"options\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete custom field",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}/custom-fields/{{fieldId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}",
+                "custom-fields",
+                "{{fieldId}}"
+              ]
+            },
+            "description": "Remove a custom field by its id.\n\n**Access:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Create category",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            },
+            "description": "Create a category. customFields optional array; parentId/icon optional.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Laptops\",\n  \"customFields\": [],\n  \"parentId\": null,\n  \"icon\": \"laptop\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "description": "Partial update. A category cannot be its own parent.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ultrabooks\",\n  \"customFields\": [],\n  \"status\": \"ACTIVE\",\n  \"parentId\": null,\n  \"icon\": \"laptop\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete category",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "description": "Delete a category.\n\n**Access:** Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Assets",
+      "description": "Asset register. List/detail are scoped (Employee \u2192 held, Dept Head \u2192 dept, Admin/AM \u2192 all). Writes: Admin/Asset Manager.",
+      "item": [
+        {
+          "name": "List assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets?page=1&limit=20&q=&categoryId=&departmentId=&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Page size (max 100)"
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Search name/tag/serial",
+                  "disabled": true
+                },
+                {
+                  "key": "categoryId",
+                  "value": "",
+                  "description": "Filter by category",
+                  "disabled": true
+                },
+                {
+                  "key": "departmentId",
+                  "value": "",
+                  "description": "Filter by department",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "AVAILABLE|ALLOCATED|UNDER_MAINTENANCE|RETIRED|DISPOSED|LOST",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Paginated, filterable list.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Search assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/search?q=AF-0001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "AF-0001",
+                  "description": "Search term (required)"
+                }
+              ]
+            },
+            "description": "Quick lookup by tag/serial/name (\u2318K, QR scan). Returns up to 20.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk delete assets",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/bulk-delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "bulk-delete"
+              ]
+            },
+            "description": "Delete multiple assets by id.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\n    \"{{assetId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register asset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets"
+              ]
+            },
+            "description": "Create an asset. `tag` auto-generates (AF-0001\u2026) if omitted. customValues holds category custom-field values.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tag\": \"\",\n  \"name\": \"Dell Latitude 7440\",\n  \"serialNo\": \"SN-123456\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"condition\": \"GOOD\",\n  \"location\": \"HQ / Floor 2\",\n  \"roomId\": null,\n  \"isBookable\": false,\n  \"purchaseDate\": \"2026-01-15\",\n  \"purchaseCost\": 1499.0,\n  \"customValues\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get asset",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}"
+              ]
+            },
+            "description": "Full detail including uploaded documents. 403 if outside your scope, 404 if missing.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update asset",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}"
+              ]
+            },
+            "description": "Partial update. Any subset of fields.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Dell Latitude 7440 (upgraded)\",\n  \"condition\": \"FAIR\",\n  \"location\": \"HQ / Floor 3\",\n  \"isBookable\": true,\n  \"status\": \"AVAILABLE\",\n  \"customValues\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Asset history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}",
+                "history"
+              ]
+            },
+            "description": "Allocation + maintenance timeline for the asset.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload asset document",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}/documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}",
+                "documents"
+              ]
+            },
+            "description": "multipart/form-data with a `file` field (max 10 MB). Uploads to Cloudinary (requires server config).\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Document to upload (max 10 MB)",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Asset QR code",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}/qr",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}",
+                "qr"
+              ]
+            },
+            "description": "Returns a PNG data-URL QR encoding the asset tag.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Retire asset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}/retire",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}",
+                "retire"
+              ]
+            },
+            "description": "Asset must be AVAILABLE. Moves it to RETIRED.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"End of life\",\n  \"retirementDate\": \"2026-07-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Dispose asset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}/dispose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}",
+                "dispose"
+              ]
+            },
+            "description": "Only from RETIRED. Moves it to DISPOSED.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"Recycled\",\n  \"notes\": \"Handed to e-waste vendor\",\n  \"disposalDate\": \"2026-07-12\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark asset lost",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/{{assetId}}/mark-lost",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "assets",
+                "{{assetId}}",
+                "mark-lost"
+              ]
+            },
+            "description": "Marks the asset LOST.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Locations",
+      "description": "Buildings \u2192 Floors \u2192 Rooms cascade.",
+      "item": [
+        {
+          "name": "List locations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/locations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "locations"
+              ]
+            },
+            "description": "Nested buildings/floors/rooms tree.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Allocations",
+      "description": "Asset check-out/check-in. List scoped by holder. Create/return-approve: Admin/AM. Approve: Admin/AM/Dept Head. Return: the holder.",
+      "item": [
+        {
+          "name": "List allocations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations?assetId=&employeeId=&departmentId=&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations"
+              ],
+              "query": [
+                {
+                  "key": "assetId",
+                  "value": "",
+                  "description": "Filter by asset",
+                  "disabled": true
+                },
+                {
+                  "key": "employeeId",
+                  "value": "",
+                  "description": "Filter by holder",
+                  "disabled": true
+                },
+                {
+                  "key": "departmentId",
+                  "value": "",
+                  "description": "Filter by holder's department",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "PENDING|ACTIVE|RETURN_REQUESTED|RETURNED|REJECTED",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Scoped list (max 200).\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Kanban board",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations/kanban",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations",
+                "kanban"
+              ]
+            },
+            "description": "Allocations grouped into PENDING / ACTIVE / RETURN_REQUESTED / OVERDUE columns.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Overdue allocations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations/overdue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations",
+                "overdue"
+              ]
+            },
+            "description": "Active/return-requested allocations past their expected return date, with daysOverdue.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get allocation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations/{{allocationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations",
+                "{{allocationId}}"
+              ]
+            },
+            "description": "Single allocation.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create allocation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations"
+              ]
+            },
+            "description": "Allocate an AVAILABLE asset to an ACTIVE employee. Asset becomes ALLOCATED.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetId\": \"{{assetId}}\",\n  \"employeeId\": \"{{userId}}\",\n  \"purpose\": \"Onboarding kit\",\n  \"expectedReturnDate\": \"2026-12-31\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve allocation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations/{{allocationId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations",
+                "{{allocationId}}",
+                "approve"
+              ]
+            },
+            "description": "Approve a PENDING request. Dept Head limited to their department. Body optional.\n\n**Access:** Admin / AM / Dept Head",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Request return",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations/{{allocationId}}/return",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations",
+                "{{allocationId}}",
+                "return"
+              ]
+            },
+            "description": "Holder initiates return with a condition check-in. Moves to RETURN_REQUESTED.\n\n**Access:** Holder only",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"condition\": \"GOOD\",\n  \"notes\": \"Returned in good shape\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve return",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/allocations/{{allocationId}}/return/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "allocations",
+                "{{allocationId}}",
+                "return",
+                "approve"
+              ]
+            },
+            "description": "Confirm check-in. Asset becomes AVAILABLE again. Body optional.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Transfers",
+      "description": "Peer-to-peer asset transfers. Anyone can request; Admin/AM/Dept Head decide.",
+      "item": [
+        {
+          "name": "List transfers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers?status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "REQUESTED | APPROVED | REJECTED",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Employee \u2192 own (either side), Dept Head \u2192 own dept, Admin/AM \u2192 all.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get transfer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers/{{transferId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers",
+                "{{transferId}}"
+              ]
+            },
+            "description": "Single transfer request.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Request transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers"
+              ]
+            },
+            "description": "Request transfer of an ALLOCATED asset to another user. Only one open request per asset.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetId\": \"{{assetId}}\",\n  \"toUserId\": \"{{userId}}\",\n  \"reason\": \"Moving to new project\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers/{{transferId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers",
+                "{{transferId}}",
+                "approve"
+              ]
+            },
+            "description": "Approve; moves the active allocation to the target user. Dept Head limited to their dept.\n\n**Access:** Admin / AM / Dept Head",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reject transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers/{{transferId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers",
+                "{{transferId}}",
+                "reject"
+              ]
+            },
+            "description": "Reject with an optional reason.\n\n**Access:** Admin / AM / Dept Head",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Asset needed by current team\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Resources (bookable)",
+      "description": "Bookable assets and their calendars/availability.",
+      "item": [
+        {
+          "name": "List resources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resources"
+              ]
+            },
+            "description": "Bookable, in-service assets (the booking picker).\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Resource calendar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resources/{{resourceId}}/calendar?from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resources",
+                "{{resourceId}}",
+                "calendar"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "ISO datetime (optional)",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "ISO datetime (optional)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Confirmed bookings in a window (defaults to next 7 days).\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Resource availability",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resources/{{resourceId}}/availability?date=2026-07-14",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resources",
+                "{{resourceId}}",
+                "availability"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "2026-07-14",
+                  "description": "YYYY-MM-DD (required)"
+                }
+              ]
+            },
+            "description": "Free/busy hour grid (09:00\u201318:00) for a date.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "description": "Room/equipment bookings with conflict checking. Manage = owner, Dept Head of booker's dept, or Admin/AM.",
+      "item": [
+        {
+          "name": "List bookings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings?resourceId=&status=&date=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "resourceId",
+                  "value": "",
+                  "description": "Filter by resource",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "UPCOMING|ONGOING|COMPLETED|CANCELLED",
+                  "disabled": true
+                },
+                {
+                  "key": "date",
+                  "value": "",
+                  "description": "YYYY-MM-DD",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Scoped list (max 200), status derived (UPCOMING/ONGOING/COMPLETED/CANCELLED).\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "My bookings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/my",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "my"
+              ]
+            },
+            "description": "The current user's bookings.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Check availability",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/check-availability",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "check-availability"
+              ]
+            },
+            "description": "Real-time overlap check. Provide start/end ISO OR date+startTime+endTime. Suggests alternatives on conflict.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceId\": \"{{resourceId}}\",\n  \"date\": \"2026-07-14\",\n  \"startTime\": \"09:00\",\n  \"endTime\": \"10:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings"
+              ]
+            },
+            "description": "Create a conflict-checked booking. Accepts start/end ISO OR date+startTime+endTime.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceId\": \"{{resourceId}}\",\n  \"start\": \"2026-07-14T09:00:00\",\n  \"end\": \"2026-07-14T10:00:00\",\n  \"purpose\": \"Sprint planning\",\n  \"attendees\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create recurring booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/recurring",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "recurring"
+              ]
+            },
+            "description": "Daily/weekly series between startDate and endDate (safety cap 60 slots). Skips conflicting dates.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceId\": \"{{resourceId}}\",\n  \"frequency\": \"WEEKLY\",\n  \"startDate\": \"2026-07-14\",\n  \"endDate\": \"2026-08-14\",\n  \"startTime\": \"09:00\",\n  \"endTime\": \"10:00\",\n  \"purpose\": \"Weekly standup\",\n  \"attendees\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get booking",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{bookingId}}"
+              ]
+            },
+            "description": "Single booking.\n\n**Access:** Manager of booking"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{bookingId}}",
+                "cancel"
+              ]
+            },
+            "description": "Cancel a booking. Body optional.\n\n**Access:** Manager of booking",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reschedule booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bookings/{{bookingId}}/reschedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bookings",
+                "{{bookingId}}",
+                "reschedule"
+              ]
+            },
+            "description": "Move a booking; re-runs the overlap check. Provide start/end ISO OR date+startTime+endTime.\n\n**Access:** Manager of booking",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"2026-07-14T11:00:00\",\n  \"end\": \"2026-07-14T12:00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Maintenance",
+      "description": "Maintenance workflow. Anyone raises/ comments; Admin/AM approve/reject/assign/escalate; assigned technician starts/resolves.",
+      "item": [
+        {
+          "name": "List maintenance requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance?status=&priority=&assetId=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "PENDING|APPROVED|REJECTED|TECHNICIAN_ASSIGNED|IN_PROGRESS|RESOLVED|ESCALATED",
+                  "disabled": true
+                },
+                {
+                  "key": "priority",
+                  "value": "",
+                  "description": "LOW|MEDIUM|HIGH|CRITICAL",
+                  "disabled": true
+                },
+                {
+                  "key": "assetId",
+                  "value": "",
+                  "description": "Filter by asset",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Scoped list (max 200). Employees also see jobs assigned to them.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get maintenance request",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}"
+              ]
+            },
+            "description": "Detail incl. comment count.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Raise maintenance request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance"
+              ]
+            },
+            "description": "Raise a request against an asset. priority defaults to MEDIUM.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetId\": \"{{assetId}}\",\n  \"issue\": \"Screen flickering intermittently\",\n  \"issueType\": \"HARDWARE\",\n  \"priority\": \"HIGH\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "approve"
+              ]
+            },
+            "description": "Approve a PENDING request. Asset goes UNDER_MAINTENANCE. Body optional.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reject request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "reject"
+              ]
+            },
+            "description": "Reject a PENDING request with a reason.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Duplicate of existing ticket\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Assign technician",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/assign",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "assign"
+              ]
+            },
+            "description": "Assign a technician by user id or free-text name. Request must be APPROVED.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technicianId\": \"{{userId}}\",\n  \"technicianName\": \"External Vendor Co.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start work",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "start"
+              ]
+            },
+            "description": "Move ASSIGNED \u2192 IN_PROGRESS. Body optional.\n\n**Access:** Assigned technician / Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "resolve"
+              ]
+            },
+            "description": "Resolve; asset returns to AVAILABLE (or ALLOCATED if still held).\n\n**Access:** Technician / Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Replaced display panel\",\n  \"cost\": 220.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Escalate request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/escalate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "escalate"
+              ]
+            },
+            "description": "Escalate; bumps priority to CRITICAL.\n\n**Access:** Admin / Asset Manager",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"SLA breach\",\n  \"escalateTo\": \"ADMIN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List comments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "comments"
+              ]
+            },
+            "description": "Comment thread.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Add comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/{{maintenanceId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "{{maintenanceId}}",
+                "comments"
+              ]
+            },
+            "description": "Add a comment to the request.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Vendor scheduled for Monday.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Audit Cycles",
+      "description": "Physical audit cycles. Create/auditors/close: Admin. Mark items: assigned auditor or Admin. Reads scoped for Dept Heads.",
+      "item": [
+        {
+          "name": "List audit cycles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles?status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "ACTIVE | CLOSED",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Dept Heads see org-wide + cycles covering their dept.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create audit cycle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles"
+              ]
+            },
+            "description": "Creates a cycle and snapshots checklist items from assets in scope. Omit departmentIds for an org-wide (ALL) cycle.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Q3 2026 Physical Audit\",\n  \"departmentIds\": [\n    \"{{departmentId}}\"\n  ],\n  \"startDate\": \"2026-07-15\",\n  \"endDate\": \"2026-07-30\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get audit cycle",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}"
+              ]
+            },
+            "description": "Cycle detail + auditors + departments.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Assign auditors",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/auditors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "auditors"
+              ]
+            },
+            "description": "Assign auditors by user id (idempotent).\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userIds\": [\n    \"{{userId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List audit items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/items?status=&q=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "items"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "PENDING|VERIFIED|DISCREPANCY|MISSING",
+                  "disabled": true
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Search tag/name/serial",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "The checklist, with per-status counts.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk update items",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/items/bulk-update",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "items",
+                "bulk-update"
+              ]
+            },
+            "description": "Mark several items at once. verification: VERIFIED | DISCREPANCY | MISSING.\n\n**Access:** Assigned auditor / Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verification\": \"VERIFIED\",\n  \"itemIds\": [\n    \"{{itemId}}\"\n  ],\n  \"notes\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update single item",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/items/{{itemId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "items",
+                "{{itemId}}"
+              ]
+            },
+            "description": "Mark one item, optionally with a photo.\n\n**Access:** Assigned auditor / Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verification\": \"DISCREPANCY\",\n  \"notes\": \"Found in wrong room\",\n  \"photoUrl\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Cycle progress",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/progress",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "progress"
+              ]
+            },
+            "description": "Totals + per-auditor completion breakdown.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Discrepancy report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/discrepancy-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "discrepancy-report"
+              ]
+            },
+            "description": "Flagged (DISCREPANCY/MISSING) items.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Cycle summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "summary"
+              ]
+            },
+            "description": "Historical summary (useful for closed cycles).\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Close cycle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit-cycles/{{cycleId}}/close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit-cycles",
+                "{{cycleId}}",
+                "close"
+              ]
+            },
+            "description": "Locks the cycle. MISSING items mark their assets LOST. Body optional.\n\n**Access:** Admin",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "description": "Home dashboard widgets. All scoped: Employee \u2192 own, Dept Head \u2192 dept, Admin/AM \u2192 org.",
+      "item": [
+        {
+          "name": "KPIs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/kpis",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard",
+                "kpis"
+              ]
+            },
+            "description": "Headline counters.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Overdue items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/overdue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard",
+                "overdue"
+              ]
+            },
+            "description": "Overdue returns list.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Activity feed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/activity-feed?limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard",
+                "activity-feed"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Max rows (max 50)"
+                }
+              ]
+            },
+            "description": "Recent activity timeline.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Utilization chart",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/utilization-chart?days=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard",
+                "utilization-chart"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "30",
+                  "description": "Window 7\u201390"
+                }
+              ]
+            },
+            "description": "% of assets allocated per day.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Upcoming returns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/upcoming-returns?limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard",
+                "upcoming-returns"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": "Max rows (max 20)"
+                }
+              ]
+            },
+            "description": "Next returns due, flagged ON_TIME/OVERDUE.\n\n**Access:** Authenticated (scoped)"
+          },
+          "response": []
+        },
+        {
+          "name": "Fleet health score",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/health-score",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard",
+                "health-score"
+              ]
+            },
+            "description": "Composite fleet health % with breakdown.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "description": "Analytics reports. Admin / Asset Manager / Dept Head (dept heads scoped to their department).",
+      "item": [
+        {
+          "name": "Utilization report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/utilization",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "utilization"
+              ]
+            },
+            "description": "Most-used and idle assets.\n\n**Access:** Admin / AM / Dept Head"
+          },
+          "response": []
+        },
+        {
+          "name": "Maintenance frequency",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/maintenance-frequency",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "maintenance-frequency"
+              ]
+            },
+            "description": "Maintenance counts by category.\n\n**Access:** Admin / AM / Dept Head"
+          },
+          "response": []
+        },
+        {
+          "name": "Due for maintenance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/due-for-maintenance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "due-for-maintenance"
+              ]
+            },
+            "description": "Assets due or nearing retirement (\u22652 repairs or >4 years old).\n\n**Access:** Admin / AM / Dept Head"
+          },
+          "response": []
+        },
+        {
+          "name": "Allocation summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/allocation-summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "allocation-summary"
+              ]
+            },
+            "description": "Active allocations by department.\n\n**Access:** Admin / AM / Dept Head"
+          },
+          "response": []
+        },
+        {
+          "name": "Booking heatmap",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/booking-heatmap",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "booking-heatmap"
+              ]
+            },
+            "description": "Peak booking hours per resource.\n\n**Access:** Admin / AM / Dept Head"
+          },
+          "response": []
+        },
+        {
+          "name": "Export report (CSV)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/export?type=utilization&format=csv",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "utilization",
+                  "description": "utilization|maintenance-frequency|due-for-maintenance|allocation-summary|booking-heatmap"
+                },
+                {
+                  "key": "format",
+                  "value": "csv",
+                  "description": "Only csv supported"
+                }
+              ]
+            },
+            "description": "Download any report as CSV.\n\n**Access:** Admin / AM / Dept Head"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "description": "Per-user notification feed and preferences. All scoped to the logged-in user.",
+      "item": [
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications?unread=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "unread",
+                  "value": "true",
+                  "description": "true = unread only",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Own feed (max 100) + unread count.\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Get preferences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "preferences"
+              ]
+            },
+            "description": "Own notification preferences (merged with defaults).\n\n**Access:** Authenticated"
+          },
+          "response": []
+        },
+        {
+          "name": "Update preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "preferences"
+              ]
+            },
+            "description": "Upsert own preferences (partial merge).\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"allocation\": true,\n  \"transfer\": true,\n  \"maintenance\": true,\n  \"booking\": true,\n  \"audit\": true,\n  \"email\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark all read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/mark-all-read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "mark-all-read"
+              ]
+            },
+            "description": "Mark every unread notification as read. Body optional.\n\n**Access:** Authenticated",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark one read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/{{notificationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "{{notificationId}}",
+                "read"
+              ]
+            },
+            "description": "Mark a single notification read.\n\n**Access:** Authenticated (owner)",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Dismiss notification",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/{{notificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "{{notificationId}}"
+              ]
+            },
+            "description": "Delete a notification.\n\n**Access:** Authenticated (owner)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Activity Logs",
+      "description": "Full system audit trail. Admin only.",
+      "item": [
+        {
+          "name": "List activity logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/activity-logs?page=1&limit=25&actionType=&userId=&entityType=&from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "activity-logs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page"
+                },
+                {
+                  "key": "limit",
+                  "value": "25",
+                  "description": "Page size (max 100)"
+                },
+                {
+                  "key": "actionType",
+                  "value": "",
+                  "description": "ALLOCATION|RETURN|TRANSFER|BOOKING|MAINTENANCE|AUDIT|ASSET|USER_CHANGE|SYSTEM",
+                  "disabled": true
+                },
+                {
+                  "key": "userId",
+                  "value": "",
+                  "description": "Filter by actor",
+                  "disabled": true
+                },
+                {
+                  "key": "entityType",
+                  "value": "",
+                  "description": "Filter by entity type",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "YYYY-MM-DD",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "YYYY-MM-DD",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Paginated, filterable audit trail.\n\n**Access:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Export activity logs (CSV)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/activity-logs/export?format=csv&from=&to=&actionType=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "activity-logs",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "csv",
+                  "description": "Only csv supported"
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "YYYY-MM-DD",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "YYYY-MM-DD",
+                  "disabled": true
+                },
+                {
+                  "key": "actionType",
+                  "value": "",
+                  "description": "Filter by action type",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Download the audit trail as CSV (max 5000 rows).\n\n**Access:** Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "description": "Liveness/readiness probe (no auth, no /api prefix).",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Verifies the DB connection and reports uptime. 200 healthy / 503 degraded.\n\n**Access:** Public"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "assetId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "categoryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "departmentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "allocationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "transferId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bookingId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "resourceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "maintenanceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cycleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "itemId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "fieldId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
