@@ -1,37 +1,35 @@
 import jwt, { type SignOptions } from 'jsonwebtoken';
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { config } from '../config.js';
 
-export interface AuthUser {
-  id: string;
-  email: string;
+export type Role = 'ADMIN' | 'ASSET_MANAGER' | 'DEPT_HEAD' | 'EMPLOYEE';
+
+export interface AccessPayload {
+  userId: string;
+  role: Role;
+  departmentId: string | null;
 }
 
-export interface TokenPair {
-  accessToken: string;
-  refreshToken: string;
+/** Short-lived JWT (spec §2): { userId, role, departmentId }, 15 minutes. */
+export const signAccessToken = (payload: AccessPayload): string =>
+  jwt.sign(payload, config.accessSecret, {
+    expiresIn: config.accessTokenTtl as SignOptions['expiresIn'],
+    issuer: 'assetflow-api',
+    audience: 'api',
+  });
+
+export function verifyAccessToken(token: string): AccessPayload {
+  const decoded = jwt.verify(token, config.accessSecret, {
+    issuer: 'assetflow-api',
+    audience: 'api',
+  }) as jwt.JwtPayload;
+  if (!decoded.userId || !decoded.role) throw new Error('malformed access token');
+  return {
+    userId: String(decoded.userId),
+    role: decoded.role as Role,
+    departmentId: decoded.departmentId ?? null,
+  };
 }
 
-export function issueTokens(user: AuthUser): TokenPair {
-  const accessToken = jwt.sign(
-    { sub: user.id, email: user.email, type: 'access' },
-    config.accessSecret,
-    {
-      expiresIn: config.accessTokenTtl as SignOptions['expiresIn'],
-      issuer: 'assetflow-api',
-      audience: 'api',
-    },
-  );
-
-  const refreshToken = jwt.sign(
-    { sub: user.id, type: 'refresh', jti: randomUUID() },
-    config.refreshSecret,
-    {
-      expiresIn: `${config.refreshTokenTtlDays}d` as SignOptions['expiresIn'],
-      issuer: 'assetflow-api',
-      audience: 'api',
-    },
-  );
-
-  return { accessToken, refreshToken };
-}
+/** Opaque random 64-byte refresh token (spec §2) — only its SHA-256 lands in the DB. */
+export const createRefreshToken = (): string => randomBytes(64).toString('hex');

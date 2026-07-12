@@ -1,21 +1,32 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import { randomUUID } from 'node:crypto';
+import { config } from './config.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
-import { aiRouter } from './routes/ai.js';
-import { imagesRouter } from './routes/images.js';
+import { usersRouter } from './routes/users.js';
+import { departmentsRouter } from './routes/departments.js';
+import { categoriesRouter } from './routes/categories.js';
 import { sanitize } from './middleware/sanitize.js';
 import { logger } from './lib/logger.js';
 
 export const app = express();
 app.use(helmet());
-app.use(cors());
+
+// credentials: true is required on BOTH sides (here and fetch's credentials:
+// 'include') for the HttpOnly auth cookies to cross origins (spec §2).
+app.use(
+  cors({
+    origin: config.clientUrl.split(',').map((o) => o.trim()),
+    credentials: true,
+  }),
+);
 
 // Request logging: one line per request with id, method, url, status, duration.
-// Never logs bodies (OTPs/tokens) and redacts the Authorization header.
+// Never logs bodies (passwords/OTPs) and redacts auth headers + cookies.
 app.use(
   pinoHttp({
     logger,
@@ -28,19 +39,17 @@ app.use(
 );
 
 app.use(express.json({ limit: '20kb' }));
+app.use(cookieParser());
 app.use(sanitize);
 
 app.use('/health', healthRouter);
 app.use('/api/auth', authRouter);
-app.use('/api/ai', aiRouter);
-app.use('/api/images', imagesRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/departments', departmentsRouter);
+app.use('/api/categories', categoriesRouter);
 
-app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
+app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found', data: null }));
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   (req.log ?? logger).error({ err: error }, 'Unhandled error');
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    timestamp: new Date().toISOString(),
-  });
+  res.status(500).json({ success: false, message: 'Internal server error', data: null });
 });

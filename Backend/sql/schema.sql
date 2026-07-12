@@ -1,61 +1,85 @@
+-- AssetFlow — Authentication & RBAC schema (spec §3)
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Remove tables left over from the initial scaffold (different shape / not in spec).
+DROP TABLE IF EXISTS email_otps;
+DROP TABLE IF EXISTS images;
+
+-- If a legacy `users` table (no password_hash column) exists, replace it and its dependents.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_name = 'users' AND column_name = 'password_hash') THEN
+    DROP TABLE IF EXISTS refresh_tokens CASCADE;
+    DROP TABLE IF EXISTS users CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM ('ADMIN','ASSET_MANAGER','DEPT_HEAD','EMPLOYEE');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE user_status AS ENUM ('ACTIVE','INACTIVE');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS departments (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT UNIQUE NOT NULL,
+  head_id    UUID,
+  parent_id  UUID REFERENCES departments(id),
+  status     TEXT NOT NULL DEFAULT 'ACTIVE',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email TEXT NOT NULL,
-  name TEXT,
-  date_of_birth DATE,
-  google_sub TEXT,
-  profile_picture_url TEXT,
-  email_verified_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT users_email_normalized CHECK (email = LOWER(TRIM(email)))
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT NOT NULL,
+  email         TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role          user_role   NOT NULL DEFAULT 'EMPLOYEE',
+  department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+  status        user_status NOT NULL DEFAULT 'ACTIVE',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx ON users (LOWER(email));
+DO $$ BEGIN
+  ALTER TABLE departments
+    ADD CONSTRAINT fk_dept_head FOREIGN KEY (head_id)
+    REFERENCES users(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Keep existing databases in sync when this migration is run again.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_picture_url TEXT;
-
-CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_unique_idx
-  ON users (google_sub) WHERE google_sub IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS email_otps (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email TEXT NOT NULL,
-  otp_hash TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS password_reset_otps (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash  TEXT NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
-  attempts SMALLINT NOT NULL DEFAULT 0,
-  consumed_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  consumed   BOOLEAN NOT NULL DEFAULT FALSE,
+  attempts   INT     NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS email_otps_lookup_idx
-  ON email_otps (email, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS images (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  public_id TEXT NOT NULL UNIQUE,
-  url TEXT NOT NULL,
-  format TEXT,
-  width INTEGER,
-  height INTEGER,
-  bytes INTEGER,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS images_user_idx ON images (user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token_hash TEXT NOT NULL UNIQUE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  revoked_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash  TEXT UNIQUE NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  revoked_at  TIMESTAMPTZ,
+  replaced_by UUID REFERENCES refresh_tokens(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens (user_id);
+-- Org-setup picklist for Screen 3/4 (custom fields per category, e.g. warranty period).
+CREATE TABLE IF NOT EXISTS categories (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          TEXT UNIQUE NOT NULL,
+  custom_fields JSONB NOT NULL DEFAULT '[]',
+  status        TEXT NOT NULL DEFAULT 'ACTIVE',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email    ON users(email);
+CREATE INDEX IF NOT EXISTS idx_otp_user       ON password_reset_otps(user_id, consumed);
+CREATE INDEX IF NOT EXISTS idx_rt_hash        ON refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_rt_user_active ON refresh_tokens(user_id) WHERE revoked_at IS NULL;
