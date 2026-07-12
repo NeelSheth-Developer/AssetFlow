@@ -1,4 +1,3 @@
-import nodemailer, { type Transporter } from 'nodemailer';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 
@@ -117,71 +116,84 @@ const buildSignupHtml = (): string => `<!DOCTYPE html>
 </body>
 </html>`;
 
-let transporter: Transporter | undefined;
-function getTransporter(): Transporter {
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: config.mail.host,
-      port: config.mail.port,
-      secure: config.mail.port === 465,
-      auth: { user: config.mail.user, pass: config.mail.pass },
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 20_000,
-    });
+type EmailContent = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+};
+
+/**
+ * Send transactional email through Brevo's HTTPS API. Unlike SMTP, this works
+ * on Railway plans that block outbound SMTP ports.
+ */
+async function sendEmail(content: EmailContent): Promise<void> {
+  const { brevoApiKey, senderEmail, senderName } = config.mail;
+  if (!brevoApiKey || !senderEmail) {
+    throw new Error(
+      'Email is not configured — set BREVO_API_KEY and BREVO_SENDER_EMAIL',
+    );
   }
-  return transporter;
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'api-key': brevoApiKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email: content.to }],
+      subject: content.subject,
+      textContent: content.text,
+      htmlContent: content.html,
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Brevo email failed (${response.status}): ${details}`);
+  }
 }
 
-// Gmail SMTP via Nodemailer — delivers to any address. Needs MAIL_USER +
-// MAIL_PASS (a Gmail App Password, not the account password).
 export async function sendPasswordResetEmail(email: string, code: string): Promise<void> {
-  if (!config.mail.user || !config.mail.pass) {
-    throw new Error('Email is not configured — set MAIL_USER and MAIL_PASS (Gmail App Password)');
-  }
-
   let lastError: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      await getTransporter().sendMail({
-        from: `${config.appName} <${config.mail.from}>`,
+      await sendEmail({
         to: email,
         subject: resetSubject,
         text: buildResetText(code),
         html: buildResetHtml(code),
       });
-      logger.info({ to: email, provider: 'gmail' }, 'Password reset email delivered');
+      logger.info({ to: email, provider: 'brevo' }, 'Password reset email delivered');
       return;
     } catch (error) {
       lastError = error;
-      logger.error({ err: error, to: email, attempt }, 'Gmail send failed');
+      logger.error({ err: error, to: email, attempt }, 'Brevo send failed');
     }
   }
   throw lastError;
 }
 
 export async function sendSignupWelcomeEmail(email: string): Promise<void> {
-  if (!config.mail.user || !config.mail.pass) {
-    throw new Error('Email is not configured — set MAIL_USER and MAIL_PASS (Gmail App Password)');
-  }
-
   let lastError: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      await getTransporter().sendMail({
-        from: `${config.appName} <${config.mail.from}>`,
+      await sendEmail({
         to: email,
         subject: signupSubject,
         text: `Welcome to ${config.appName}! Your account has been created successfully.`,
         html: buildSignupHtml(),
       });
-      logger.info({ to: email, provider: 'gmail' }, 'Signup welcome email delivered');
+      logger.info({ to: email, provider: 'brevo' }, 'Signup welcome email delivered');
       return;
     } catch (error) {
       lastError = error;
-      logger.error({ err: error, to: email, attempt }, 'Gmail send failed');
+      logger.error({ err: error, to: email, attempt }, 'Brevo send failed');
     }
   }
   throw lastError;
 }
-
