@@ -1,29 +1,74 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { query } from '../db/neon.js';
 import { ok, fail } from '../lib/respond.js';
 import { isUuid } from '../lib/validate.js';
 import { requireAuth } from '../middleware/auth.js';
 
-// Screen 10 — everything here is scoped to the logged-in user only.
+// Screen 10. Feed visibility: Admin → all, Asset Manager → asset-related
+// (ALLOCATION/RETURN/TRANSFER/MAINTENANCE) + own, Dept Head → their department,
+// Employee → own only. Writes (mark-read/delete) stay owner-only.
 export const notificationsRouter = Router();
 notificationsRouter.use(requireAuth);
 
-// GET /api/notifications — own feed (?unread=true to filter).
+const ASSET_TYPES = ['ALLOCATION', 'RETURN', 'TRANSFER', 'MAINTENANCE'];
+
+// Returns a WHERE fragment over notifications n JOIN users u (the recipient),
+// pushing bind values onto params. '' means org-wide (Admin).
+function scopeFeed(req: Request, params: unknown[]): string {
+  const user = req.user!;
+  if (user.role === 'ADMIN') return '';
+  if (user.role === 'ASSET_MANAGER') {
+    params.push(ASSET_TYPES, user.userId);
+    return `(n.type = ANY($${params.length - 1}::text[]) OR n.user_id = $${params.length})`;
+  }
+  if (user.role === 'DEPT_HEAD' && user.departmentId) {
+    params.push(user.departmentId);
+    return `u.department_id = $${params.length}`;
+  }
+  params.push(user.userId);
+  return `n.user_id = $${params.length}`;
+}
+
+// GET /api/notifications — role-scoped feed (?unread=true to filter).
 notificationsRouter.get('/', async (req, res, next) => {
   try {
     const unreadOnly = String(req.query.unread ?? '') === 'true';
+    const params: unknown[] = [];
+    const filters: string[] = [];
+    const scope = scopeFeed(req, params);
+    if (scope) filters.push(scope);
+    if (unreadOnly) filters.push('n.read = FALSE');
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
     const rows = await query(
-      `SELECT id, type, title, message, entity_type, entity_id, read, created_at
-       FROM notifications WHERE user_id = $1 ${unreadOnly ? 'AND read = FALSE' : ''}
-       ORDER BY created_at DESC LIMIT 100`,
-      [req.user!.userId],
+      `SELECT n.id, n.type, n.title, n.message, n.entity_type, n.entity_id, n.read, n.created_at,
+              u.id AS recipient_id, u.name AS recipient_name
+       FROM notifications n JOIN users u ON u.id = n.user_id
+       ${where} ORDER BY n.created_at DESC LIMIT 100`,
+      params,
     );
+
+    const unreadParams: unknown[] = [];
+    const unreadScope = scopeFeed(req, unreadParams);
     const unread = await query<{ count: string }>(
-      'SELECT COUNT(*) AS count FROM notifications WHERE user_id = $1 AND read = FALSE',
-      [req.user!.userId],
+      `SELECT COUNT(*) AS count FROM notifications n JOIN users u ON u.id = n.user_id
+       WHERE ${unreadScope ? unreadScope + ' AND ' : ''} n.read = FALSE`,
+      unreadParams,
     );
+
     return ok(res, 200, 'Notifications fetched', {
-      notifications: rows.rows,
+      notifications: rows.rows.map((n) => ({
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        entity_type: n.entity_type,
+        entity_id: n.entity_id,
+        read: n.read,
+        created_at: n.created_at,
+        recipient: { id: n.recipient_id, name: n.recipient_name },
+        isMine: n.recipient_id === req.user!.userId,
+      })),
       unreadCount: Number(unread.rows[0].count),
     });
   } catch (error) {
